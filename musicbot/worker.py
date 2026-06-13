@@ -1,0 +1,234 @@
+from aiogram.exceptions import TelegramAPIError
+
+from sqlalchemy import delete, select
+
+from musicbot.bot import bot
+from musicbot.bot.sender import reply_song, send_cached_audio
+from musicbot.cache import get_cached_file_id, store_file_id
+from musicbot.config import MAX_TRACK_STORAGE_SIZE, TRACKS_PATH
+from musicbot.db import async_session
+from musicbot.db.models import DownloadQueue
+from musicbot.downloader import Song, downloader
+from musicbot.downloader.exceptions import (
+    DownloadBlockedError,
+    TrackTooLargeError,
+    UnsupportedSpotifyLinkError,
+    VideoUnavailableError,
+)
+
+from collections.abc import Sequence
+from contextlib import suppress
+from pathlib import Path
+from typing import Any
+import asyncio
+import logging
+import os
+
+logger = logging.getLogger(__name__)
+
+
+async def cleanup_old_tracks() -> None:
+    while True:
+        try:
+            tracks: list[Path] = [
+                TRACKS_PATH / track_path for track_path in os.listdir(TRACKS_PATH)
+            ]
+            total_size: int = sum(os.path.getsize(track) for track in tracks)
+
+            if total_size > MAX_TRACK_STORAGE_SIZE:
+                for track in sorted(tracks, key=lambda track: os.path.getatime(track)):
+                    track_size: int = os.path.getsize(track)
+
+                    os.remove(track)
+                    total_size -= track_size
+
+                    if total_size <= MAX_TRACK_STORAGE_SIZE:
+                        break
+        except Exception:
+            # Never let a transient filesystem error kill the cleanup loop.
+            logger.exception('Track cleanup failed')
+
+        await asyncio.sleep(60)
+
+
+async def _serve_from_cache(
+    query: str,
+    chat_id: int,
+    user_message_id: int,
+    bot_message_kwargs: dict[str, Any],
+) -> bool:
+    """Send the track from cache if we have it. Returns True on success."""
+    file_id = await get_cached_file_id(query)
+    if file_id is None:
+        return False
+
+    try:
+        await send_cached_audio(chat_id, user_message_id, file_id)
+    except TelegramAPIError:
+        # The cached file_id is no longer usable — re-download instead.
+        return False
+
+    with suppress(TelegramAPIError):
+        await bot.delete_message(**bot_message_kwargs)
+    return True
+
+
+async def _download_and_serve(
+    query: str,
+    chat_id: int,
+    user_message_id: int,
+    bot_message_kwargs: dict[str, Any],
+) -> None:
+    with suppress(TelegramAPIError):
+        try:
+            songs: list[tuple[Song, Path | None]] = await downloader.download(query)
+
+            if songs:
+                file_ids = await asyncio.gather(
+                    *[
+                        reply_song(
+                            chat_id=chat_id,
+                            user_message_id=user_message_id,
+                            song=song,
+                            song_path=path,
+                        )
+                        for song, path in songs
+                    ]
+                )
+                await bot.delete_message(**bot_message_kwargs)
+
+                # Cache single-track results so repeats skip YouTube entirely.
+                sent_file_ids = [file_id for file_id in file_ids if file_id]
+                if len(songs) == 1 and sent_file_ids:
+                    await store_file_id(query, sent_file_ids[0])
+            else:
+                await bot.edit_message_text(
+                    **bot_message_kwargs,
+                    text=(
+                        "🔍 I couldn't find anything for this.\n\n"
+                        'Please check the spelling and try again, or send a '
+                        'YouTube link or a Spotify track link.'
+                    ),
+                )
+        except UnsupportedSpotifyLinkError:
+            await bot.edit_message_text(
+                **bot_message_kwargs,
+                text=(
+                    "⚠️ Spotify albums and playlists aren't supported.\n\n"
+                    'Please send a single Spotify track link, a YouTube link, '
+                    'or just the song name (for example: <code>Shakira Waka '
+                    'Waka</code>).'
+                ),
+            )
+        except TrackTooLargeError:
+            await bot.edit_message_text(
+                **bot_message_kwargs,
+                text=(
+                    "⚠️ This track is larger than 50 MB, which is Telegram's "
+                    "upload limit for bots, so I can't send it."
+                ),
+            )
+        except DownloadBlockedError:
+            await bot.edit_message_text(
+                **bot_message_kwargs,
+                text=(
+                    '⏳ YouTube is temporarily blocking downloads from this '
+                    'server.\n\nThis is usually short-lived — please try this '
+                    'track again in a few minutes.'
+                ),
+            )
+        except VideoUnavailableError:
+            await bot.edit_message_text(
+                **bot_message_kwargs,
+                text=(
+                    "⚠️ This video isn't available — it may be private, "
+                    'removed, or blocked in this region.\n\nTry a different '
+                    'link, or search by the song name.'
+                ),
+            )
+        except Exception:
+            await bot.edit_message_text(
+                **bot_message_kwargs,
+                text=(
+                    '⚠️ Something went wrong while downloading this track.\n\n'
+                    'Please try again in a moment, or search by the song name '
+                    '(for example: <code>Shakira Waka Waka</code>).'
+                ),
+            )
+
+
+async def process_download_request(request_id: int) -> None:
+    async with async_session() as session:
+        request: DownloadQueue | None = await session.scalar(
+            select(DownloadQueue).where(DownloadQueue.id == request_id)
+        )
+
+    if not request:
+        return
+
+    chat_id: int = request.chat_id
+    user_message_id: int = request.user_message_id
+    query: str = request.query
+
+    bot_message_kwargs: dict[str, Any] = {
+        'chat_id': chat_id,
+        'message_id': request.bot_message_id,
+    }
+
+    try:
+        served = await _serve_from_cache(
+            query, chat_id, user_message_id, bot_message_kwargs
+        )
+        if not served:
+            await _download_and_serve(
+                query, chat_id, user_message_id, bot_message_kwargs
+            )
+    finally:
+        async with async_session() as session:
+            await session.execute(
+                delete(DownloadQueue).where(DownloadQueue.id == request_id)
+            )
+            await session.commit()
+
+
+# Requests that are currently being processed, so the polling loop below
+# doesn't pick the same request up again while it's still downloading.
+_in_progress_request_ids: set[int] = set()
+
+
+async def _process_and_release(request_id: int) -> None:
+    try:
+        await process_download_request(request_id)
+    except Exception:
+        logger.exception('Failed to process request %s', request_id)
+    finally:
+        _in_progress_request_ids.discard(request_id)
+
+
+async def process_download_queue() -> None:
+    while True:
+        try:
+            async with async_session() as session:
+                request_ids: Sequence[int] = (
+                    await session.scalars(select(DownloadQueue.id))
+                ).all()
+
+            for request_id in request_ids:
+                if request_id in _in_progress_request_ids:
+                    continue
+
+                _in_progress_request_ids.add(request_id)
+                # Fire-and-forget: new requests start immediately instead of
+                # waiting for the current batch to finish. Concurrency is
+                # bounded by the download semaphore in `Downloader.download`.
+                asyncio.create_task(_process_and_release(request_id))
+        except Exception:
+            # Never let a transient DB error kill the queue loop.
+            logger.exception('Queue polling failed')
+
+        await asyncio.sleep(1)
+
+
+async def run_tasks() -> None:
+    asyncio.create_task(cleanup_old_tracks())
+    asyncio.create_task(process_download_queue())
