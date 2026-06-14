@@ -41,7 +41,7 @@ USAGE_TEXT = (
     'send individual tracks or search by name.'
 )
 if REQUIRED_CHANNEL:
-    USAGE_TEXT += f'\n\nSubscribe to {REQUIRED_CHANNEL} for programming & algorithms.'
+    USAGE_TEXT += f'\n\nPlease subscribe to {REQUIRED_CHANNEL} to use this bot.'
 
 
 @dispatcher.message(CommandStart())

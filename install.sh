@@ -47,7 +47,7 @@
         printf '\n'
         printf '# --- Channel & Admin ---\n'
         printf '# Channel users must subscribe to before using the bot (leave empty to disable).\n'
-        printf 'REQUIRED_CHANNEL=@ozodbekswe\n'
+        printf 'REQUIRED_CHANNEL=\n'
         printf '# Comma-separated Telegram user IDs with admin access (/stats, /broadcast).\n'
         printf 'ADMIN_IDS=\n'
         printf '\n'
