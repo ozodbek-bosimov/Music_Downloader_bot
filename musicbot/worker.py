@@ -135,50 +135,31 @@ async def _download_and_serve(
                 logger.warning("No songs returned for query: '%s'", query)
                 await bot.edit_message_text(
                     **bot_message_kwargs,
-                    text=(
-                        "🔍 I couldn't find anything for this.\n\n"
-                        'Please check the spelling and try again, or send a '
-                        'YouTube link or a Spotify track link.'
-                    ),
+                    text='🔍 Nothing found. Check the spelling or try a link.',
                 )
         except UnsupportedSpotifyLinkError:
             logger.warning("Unsupported Spotify link: '%s'", query)
             await bot.edit_message_text(
                 **bot_message_kwargs,
-                text=(
-                    "Spotify albums and playlists aren't supported.\n\n"
-                    'Please send a single Spotify track link, a YouTube link, '
-                    'or just the song name (for example: <code>Hans Zimmer - Cornfield Chase</code>).'
-                ),
+                text="Albums and playlists aren't supported — send a single track.",
             )
         except TrackTooLargeError:
             logger.warning("Track too large error for query: '%s'", query)
             await bot.edit_message_text(
                 **bot_message_kwargs,
-                text=(
-                    "This track is larger than 50 MB, which is Telegram's "
-                    "upload limit for bots, so I can't send it."
-                ),
+                text='This track is over 50 MB — too large to send on Telegram.',
             )
         except DownloadBlockedError:
             logger.warning("YouTube blocked error for query: '%s'", query)
             await bot.edit_message_text(
                 **bot_message_kwargs,
-                text=(
-                    'YouTube is temporarily blocking downloads from this '
-                    'server.\n\nThis is usually short-lived — please try this '
-                    'track again in a few minutes.'
-                ),
+                text='YouTube is being difficult right now. Try again in a few minutes.',
             )
         except VideoUnavailableError:
             logger.warning("Video unavailable error for query: '%s'", query)
             await bot.edit_message_text(
                 **bot_message_kwargs,
-                text=(
-                    "This video isn't available — it may be private, "
-                    'removed, or blocked in this region.\n\nTry a different '
-                    'link, or search by the song name.'
-                ),
+                text="This track isn't available — it may be private or region-locked. Try another.",
             )
         except Exception as e:
             logger.exception(
@@ -186,11 +167,7 @@ async def _download_and_serve(
             )
             await bot.edit_message_text(
                 **bot_message_kwargs,
-                text=(
-                    'Something went wrong while downloading this track.\n\n'
-                    'Please try again in a moment, or search by the song name '
-                    '(for example: <code>Hans Zimmer - Cornfield Chase</code>).'
-                ),
+                text='Something went wrong. Please try again.',
             )
 
 

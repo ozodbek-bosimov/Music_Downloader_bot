@@ -60,11 +60,9 @@ async def reply_song(
         _remove(song.thumbnail_path)
 
         text = (
-            f'<code>{song.display_name}</code> is larger than 50 MB '
-            "(Telegram's limit for bots), so I can't send it."
+            f'<code>{song.display_name}</code> is over 50 MB — too large to send.'
             if too_large
-            else f"I couldn't download <code>{song.display_name}</code>. "
-            'Please try again.'
+            else f"Couldn't download <code>{song.display_name}</code>. Try again."
         )
         await bot.send_message(**bot_message_kwargs, text=text)
         return None
