@@ -144,6 +144,8 @@ Tips for reliability:
 - **Keep yt-dlp fresh:** `poetry update yt-dlp` periodically, then restart.
 - **Logs:** go to stdout by default (your host captures them). Set
   `LOG_TO_FILE=1` to also keep rotating files in `logs/`.
+- **Memory:** the bot tunes glibc malloc (`MALLOC_ARENA_MAX`) and the thread
+  pool automatically at startup to keep RSS low on tiny hosts — no setup needed.
 
 ## License
 

@@ -21,6 +21,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 import asyncio
+import gc
 import logging
 import os
 import time
@@ -238,6 +239,9 @@ async def _process_and_release(request_id: int) -> None:
         logger.exception('Failed to process request %s', request_id)
     finally:
         _in_progress_request_ids.discard(request_id)
+        # Release yt-dlp's large info dicts promptly to keep RSS low on a
+        # memory-constrained host.
+        gc.collect()
 
 
 async def process_download_queue() -> None:
