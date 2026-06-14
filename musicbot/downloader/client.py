@@ -24,15 +24,11 @@ from pathlib import Path
 from typing import Any
 import asyncio
 import json
-import logging
 import re
 import urllib.parse
 import urllib.request
 
-logger = logging.getLogger(__name__)
-
 _download_semaphore = Semaphore(MAX_PARALLEL_DOWNLOADS)
-
 
 # Spotify serves server-rendered metadata (Open Graph tags) to simple,
 # bot-like user agents, but a full browser UA gets a JavaScript app shell with
@@ -41,11 +37,9 @@ _USER_AGENT = 'Mozilla/5.0'
 
 
 def _ydl_options() -> dict[str, Any]:
-    # We download the best available audio-only stream. By default we keep it in
-    # its native container (usually .m4a) and DON'T transcode, because FFmpeg
-    # transcoding is too CPU-heavy for a 0.25 CPU host. Telegram plays .m4a fine.
-    # NOTE: no video fallback — we never download a video stream, which keeps
-    # disk/IO usage and file sizes low on a tiny host.
+    # Best available audio-only stream, kept in its native container (usually
+    # .m4a) with no transcoding (FFmpeg is too CPU-heavy for a tiny host).
+    # No video fallback, so file sizes and disk/IO stay small.
     options: dict[str, Any] = {
         'format': 'bestaudio[ext=m4a]/bestaudio',
         'outtmpl': str(TRACKS_PATH / '%(title).200B.%(ext)s'),
@@ -55,14 +49,8 @@ def _ydl_options() -> dict[str, Any]:
         'noprogress': True,
         'noplaylist': True,
         'ignoreerrors': False,
-        # Reject anything bigger than Telegram's upload limit. This (not video
-        # length) is what bounds disk and I/O usage per download.
+        # Reject anything bigger than Telegram's upload limit.
         'max_filesize': MAX_AUDIO_FILESIZE,
-        # Network timeout and retry bounds to prevent hanging indefinitely
-        # on slow/throttled datacenter IPs.
-        'socket_timeout': 10,
-        'retries': 1,
-        'fragment_retries': 1,
     }
 
     if YTDLP_PLAYER_CLIENTS:
@@ -86,7 +74,6 @@ def _ydl_options() -> dict[str, Any]:
     return options
 
 
-
 def _http_get(url: str) -> str:
     request = urllib.request.Request(url, headers={'User-Agent': _USER_AGENT})
     with urllib.request.urlopen(request, timeout=15) as response:
@@ -105,13 +92,11 @@ def _meta_tag(html: str, prop: str) -> str | None:
 
 def _spotify_track(url: str) -> tuple[str, Song, str | None]:
     """Resolve a Spotify *track* URL into a YouTube search query, a clean
-    ``Song`` label and the real Spotify cover URL (so we can use the actual
-    album art instead of YouTube's thumbnail).
+    ``Song`` label and the real Spotify cover URL.
 
     We read the page's Open Graph tags (and fall back to Spotify's public
-    oEmbed endpoint) instead of using the Spotify API, so no API credentials
-    are required. Albums and playlists are intentionally not expanded on this
-    lightweight instance.
+    oEmbed endpoint) — no Spotify API credentials needed. Albums and playlists
+    are intentionally not expanded.
     """
     if '/track/' not in url and ':track:' not in url:
         raise UnsupportedSpotifyLinkError
@@ -145,8 +130,7 @@ def _spotify_track(url: str) -> tuple[str, Song, str | None]:
         raise UnsupportedSpotifyLinkError
 
     # Spotify's og:image is 640x640; Telegram thumbnails must be <=320px. The
-    # size is encoded in the URL, so swap it for the 300px variant of the very
-    # same cover.
+    # size is encoded in the URL, so swap it for the 300px variant.
     if cover_url:
         cover_url = cover_url.replace('ab67616d0000b273', 'ab67616d00001e02')
 
@@ -162,9 +146,7 @@ def _youtube_search_query(url: str) -> str | None:
     """Read a YouTube link's title + author via the public oEmbed endpoint.
 
     oEmbed isn't bot-checked, so we can then fetch the track through the SEARCH
-    path (``ytsearch1:``). YouTube blocks direct watch-page extraction with
-    "Sign in to confirm you're not a bot" far more aggressively than search, so
-    routing links through search makes them as reliable as a name search.
+    path (``ytsearch1:``), which YouTube blocks far less than direct extraction.
     """
     try:
         encoded = urllib.parse.quote(url, safe='')
@@ -210,9 +192,8 @@ def _download_image(url: str, name: str) -> Path | None:
 def _download_cover(item: dict[str, Any], cover_url: str | None) -> Path | None:
     """Save a cover image to use as the audio thumbnail.
 
-    For Spotify tracks we use the real album art (``cover_url``). Otherwise we
-    grab YouTube's small 320x180 JPEG, which fits Telegram's thumbnail limits
-    (JPEG, <=320px, <200 KB) and costs almost nothing to fetch."""
+    For Spotify tracks we use the real album art (``cover_url``); otherwise
+    YouTube's small 320x180 JPEG, which fits Telegram's thumbnail limits."""
     video_id = item.get('id') or 'cover'
 
     if cover_url:
@@ -271,37 +252,27 @@ def _raise_for_message(text: str) -> None:
 
 def _item_filesize(item: dict[str, Any]) -> int | None:
     """Best-effort file size from metadata (before or after download)."""
-    # After download, the size lives inside requested_downloads.
     downloads = item.get('requested_downloads')
     if downloads:
         size = downloads[0].get('filesize') or downloads[0].get('filesize_approx')
         if size:
             return int(size)
-    # Before download (extract_info with download=False), the size is at the
-    # top level of the selected format dict.
     return int(item.get('filesize') or item.get('filesize_approx') or 0) or None
 
 
 def _download(
     target: str, label: Song | None, cover_url: str | None
 ) -> list[tuple[Song, Path | None]]:
-    """Download a single track from YouTube (audio only).
+    """Download a single audio track from YouTube.
 
-    Two-phase to avoid wasting bandwidth/disk on oversized tracks:
-    1. ``extract_info(download=False)`` fetches metadata only. If the selected
-       audio stream already exceeds ``MAX_AUDIO_FILESIZE`` we reject it before
-       a single byte is written (no leftover ``.part`` files).
-    2. ``process_ie_result(download=True)`` downloads using the already-fetched
-       metadata, so YouTube isn't queried again. It returns a NEW dict carrying
-       the saved file path, so we must keep that return value.
+    Two-phase: fetch metadata first and reject oversized tracks before
+    downloading a single byte, then download using the same metadata (so
+    YouTube isn't queried twice). ``yt_dlp`` is imported at module level.
     """
-    logger.info("Extracting metadata for target: %s", target)
     try:
         with yt_dlp.YoutubeDL(_ydl_options()) as ydl:
-            # Phase 1: metadata only.
             info = ydl.extract_info(target, download=False)
             if not info:
-                logger.warning("No metadata found for target: %s", target)
                 return []
 
             entries = info.get('entries')
@@ -309,72 +280,57 @@ def _download(
                 item for item in (entries if entries is not None else [info]) if item
             ]
             if not items:
-                logger.warning("No items resolved for target: %s", target)
                 return []
 
-            # Pre-download size gate.
             for item in items:
                 size = _item_filesize(item)
                 if size and size > MAX_AUDIO_FILESIZE:
-                    logger.warning("Rejecting track early: size %s > limit %s", size, MAX_AUDIO_FILESIZE)
                     raise TrackTooLargeError
 
-            # Phase 2: download. process_ie_result returns the processed dict
-            # (with the saved file path); the original item is not mutated.
-            logger.info("Starting download phase for %d items", len(items))
+            # process_ie_result returns a NEW dict carrying the saved file path.
             downloaded = [
                 ydl.process_ie_result(item, download=True) or item for item in items
             ]
     except yt_dlp.utils.DownloadError as error:
-        logger.error("yt-dlp download error: %s", error)
         _raise_for_message(str(error))
         return []
 
-    # Metadata came through but nothing was saved (e.g. the real size was only
-    # known mid-download and hit the max_filesize limit).
     if all(_downloaded_path(item) is None for item in downloaded):
-        logger.warning("Metadata retrieved but no downloaded files saved.")
         for item in downloaded:
             size = _item_filesize(item)
             if size and size > MAX_AUDIO_FILESIZE:
                 raise TrackTooLargeError
         return []
 
-    results = [
+    return [
         (_song_from_item(item, label, cover_url), _downloaded_path(item))
         for item in downloaded
     ]
-    for song, path in results:
-        logger.info("Successfully processed song '%s' saved to path: %s", song.name, path)
-    return results
 
+
+def _resolve_and_download(query: str) -> list[tuple[Song, Path | None]]:
+    if _is_youtube_link(query):
+        # Route links through search (which YouTube doesn't block like direct
+        # extraction); fall back to the direct link if search finds nothing.
+        search_query = _youtube_search_query(query)
+        if search_query:
+            results = _download(f'ytsearch1:{search_query}', label=None, cover_url=None)
+            if results:
+                return results
+        return _download(query, label=None, cover_url=None)
+
+    if _is_spotify_link(query):
+        # Raises UnsupportedSpotifyLinkError for albums/playlists.
+        search_query, label, cover_url = _spotify_track(query)
+        return _download(f'ytsearch1:{search_query}', label=label, cover_url=cover_url)
+
+    # Plain text: treat it as a search.
+    return _download(f'ytsearch1:{query}', label=None, cover_url=None)
 
 
 class Downloader:
-    def _resolve_and_download(self, query: str) -> list[tuple[Song, Path | None]]:
-        if _is_youtube_link(query):
-            # YouTube blocks direct watch-page extraction far more than search,
-            # so prefer the search path (via the link's oEmbed title). Fall back
-            # to direct extraction only if search finds nothing.
-            search_query = _youtube_search_query(query)
-            if search_query:
-                results = _download(
-                    f'ytsearch1:{search_query}', label=None, cover_url=None
-                )
-                if results:
-                    return results
-            return _download(query, label=None, cover_url=None)
-
-        if _is_spotify_link(query):
-            # Raises UnsupportedSpotifyLinkError for albums/playlists.
-            search_query, label, cover_url = _spotify_track(query)
-            return _download(
-                f'ytsearch1:{search_query}', label=label, cover_url=cover_url
-            )
-
-        # Plain text: treat it as a search.
-        return _download(f'ytsearch1:{query}', label=None, cover_url=None)
-
     async def download(self, query: str) -> list[tuple[Song, Path | None]]:
+        # The blocking yt-dlp work runs in a worker thread; the semaphore keeps
+        # it to MAX_PARALLEL_DOWNLOADS at a time.
         async with _download_semaphore:
-            return await asyncio.to_thread(self._resolve_and_download, query)
+            return await asyncio.to_thread(_resolve_and_download, query)

@@ -21,12 +21,44 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 import asyncio
+import ctypes
+import ctypes.util
 import gc
 import logging
 import os
 import time
 
 logger = logging.getLogger(__name__)
+
+
+def _load_malloc_trim() -> Any:
+    """Return glibc's ``malloc_trim`` if available, else ``None``.
+
+    After yt-dlp frees its large info dicts, glibc often keeps the memory in
+    its own heap instead of returning it to the OS, so RSS creeps up over a
+    long uptime. ``malloc_trim(0)`` hands the free pages back, keeping memory
+    flat on a small host. Only exists on glibc (Linux); no-op elsewhere.
+    """
+    if os.name != 'posix':
+        return None
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library('c') or 'libc.so.6')
+        libc.malloc_trim.argtypes = [ctypes.c_size_t]
+        libc.malloc_trim.restype = ctypes.c_int
+        return libc.malloc_trim
+    except (OSError, AttributeError):
+        return None
+
+
+_malloc_trim = _load_malloc_trim()
+
+
+def _release_memory() -> None:
+    """Collect garbage and return freed heap pages to the OS."""
+    gc.collect()
+    if _malloc_trim is not None:
+        with suppress(Exception):
+            _malloc_trim(0)
 
 
 async def cleanup_old_tracks() -> None:
@@ -100,13 +132,17 @@ async def _download_and_serve(
     user_message_id: int,
     bot_message_kwargs: dict[str, Any],
 ) -> None:
-    logger.info("Starting download and serve for query: '%s' in chat: %d", query, chat_id)
+    logger.info(
+        "Starting download and serve for query: '%s' in chat: %d", query, chat_id
+    )
     with suppress(TelegramAPIError):
         try:
             songs: list[tuple[Song, Path | None]] = await downloader.download(query)
 
             if songs:
-                logger.info("Found %d tracks to send for query: '%s'", len(songs), query)
+                logger.info(
+                    "Found %d tracks to send for query: '%s'", len(songs), query
+                )
                 file_ids = await asyncio.gather(
                     *[
                         reply_song(
@@ -175,7 +211,9 @@ async def _download_and_serve(
                 ),
             )
         except Exception as e:
-            logger.exception("Unexpected exception downloading query '%s': %s", query, e)
+            logger.exception(
+                "Unexpected exception downloading query '%s': %s", query, e
+            )
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
@@ -199,7 +237,12 @@ async def process_download_request(request_id: int) -> None:
     user_message_id: int = request.user_message_id
     query: str = request.query
 
-    logger.info("Processing queue request_id: %d, query: '%s' for chat_id: %d", request_id, query, chat_id)
+    logger.info(
+        "Processing queue request_id: %d, query: '%s' for chat_id: %d",
+        request_id,
+        query,
+        chat_id,
+    )
 
     bot_message_kwargs: dict[str, Any] = {
         'chat_id': chat_id,
@@ -211,9 +254,9 @@ async def process_download_request(request_id: int) -> None:
             query, chat_id, user_message_id, bot_message_kwargs
         )
         if served:
-            logger.info("Request_id: %d served from cache", request_id)
+            logger.info('Request_id: %d served from cache', request_id)
         else:
-            logger.info("Request_id: %d cache miss, downloading...", request_id)
+            logger.info('Request_id: %d cache miss, downloading...', request_id)
             await _download_and_serve(
                 query, chat_id, user_message_id, bot_message_kwargs
             )
@@ -223,8 +266,7 @@ async def process_download_request(request_id: int) -> None:
                 delete(DownloadQueue).where(DownloadQueue.id == request_id)
             )
             await session.commit()
-        logger.info("Finished processing request_id: %d", request_id)
-
+        logger.info('Finished processing request_id: %d', request_id)
 
 
 # Requests that are currently being processed, so the polling loop below
@@ -241,7 +283,7 @@ async def _process_and_release(request_id: int) -> None:
         _in_progress_request_ids.discard(request_id)
         # Release yt-dlp's large info dicts promptly to keep RSS low on a
         # memory-constrained host.
-        gc.collect()
+        _release_memory()
 
 
 async def process_download_queue() -> None:

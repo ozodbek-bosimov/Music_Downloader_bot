@@ -35,12 +35,11 @@ DATABASE_URL: Final[str] = (
 )
 
 # --- Download tuning -------------------------------------------------------
-# Defaults are tuned for a tiny free-tier host (e.g. alwaysdata Free:
-# 256 MB RAM, 0.25 CPU, 1 GB disk). Override via environment variables if you
-# run on something bigger.
+# Defaults are intentionally light so the bot runs comfortably on small hosts.
+# Override any of these via environment variables on a bigger machine.
 
-# How many downloads may run at the same time. On 0.25 CPU keep this at 1 so
-# concurrent downloads don't starve each other (and so RAM stays low).
+# How many downloads may run at the same time. Keep it low on small/shared
+# CPUs so concurrent downloads don't starve each other (and RAM stays low).
 MAX_PARALLEL_DOWNLOADS: Final[int] = int(os.getenv('MAX_PARALLEL_DOWNLOADS', '1'))
 
 # Safety net for the on-disk cache. Tracks are normally deleted right after
@@ -61,9 +60,9 @@ MAX_AUDIO_FILESIZE: Final[int] = int(
 # tiny (a few hundred bytes), so the default stays well under any DB quota.
 CACHE_MAX_ENTRIES: Final[int] = int(os.getenv('CACHE_MAX_ENTRIES', '5000'))
 
-# Converting to MP3 needs FFmpeg and is CPU-heavy. On 0.25 CPU we send the
-# native audio (usually .m4a) instead, which Telegram plays fine. Set this to
-# '1' only if FFmpeg is available and you really want MP3 output.
+# Converting to MP3 needs FFmpeg and is CPU-heavy, so by default we send the
+# native audio (usually .m4a), which Telegram plays fine. Set this to '1' only
+# if FFmpeg is available and you really want MP3 output.
 CONVERT_TO_MP3: Final[bool] = os.getenv('CONVERT_TO_MP3', '0') == '1'
 
 # Optional path to an FFmpeg binary (only used when CONVERT_TO_MP3 is on).

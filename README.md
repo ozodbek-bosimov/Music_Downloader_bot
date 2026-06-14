@@ -4,8 +4,7 @@ A lightweight Telegram bot that downloads music from YouTube. Send it a **song
 name**, a **YouTube link**, or a single **Spotify track link** and it replies
 with the audio — complete with title, artist and cover art.
 
-Built to run on tiny hosts (tested on a **256 MB RAM / 0.25 CPU / 1 GB disk**
-free plan).
+Lightweight enough for a small VPS or free-tier VM (~1 GB RAM, 1 CPU).
 
 ## Features
 
@@ -127,25 +126,27 @@ keep yt-dlp updated (`poetry update yt-dlp`).
 ## Deployment
 
 Any host that can run a long-lived Python process plus PostgreSQL works
-(a VPS, a small cloud instance, or a free tier with ~256 MB RAM).
+(a VPS, a small cloud instance, or a free tier with ~1 GB RAM).
 
 1. **Database** — create a PostgreSQL database and put its credentials in
    `.env`.
 2. **Install & migrate** — `poetry install` then `alembic upgrade head`
    (`install.sh` does both).
 3. **Run under a supervisor** — start `python main.py` with something that
-   restarts it on failure (systemd, supervisor, pm2, your host's "process"
-   feature, etc.). Run **only one** instance — Telegram allows a single poller
-   per bot, so a second one causes `TelegramConflictError`.
+   restarts it on failure. A ready-made `systemd` unit ships in the repo
+   (`musicbot.service`). Run **only one** instance — Telegram allows a single
+   poller per bot, so a second one causes `TelegramConflictError`.
+
+Step-by-step VPS walkthrough (with systemd): see [docs/deploy.md](docs/deploy.md).
 
 Tips for reliability:
 
 - **YouTube blocking:** on datacenter IPs, set `YTDLP_COOKIEFILE` (see above).
 - **Keep yt-dlp fresh:** `poetry update yt-dlp` periodically, then restart.
-- **Logs:** go to stdout by default (your host captures them). Set
+- **Logs:** go to stdout by default (your host/journal captures them). Set
   `LOG_TO_FILE=1` to also keep rotating files in `logs/`.
 - **Memory:** the bot tunes glibc malloc (`MALLOC_ARENA_MAX`) and the thread
-  pool automatically at startup to keep RSS low on tiny hosts — no setup needed.
+  pool automatically at startup to keep RSS low — no setup needed.
 
 ## License
 

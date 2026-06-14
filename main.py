@@ -18,10 +18,11 @@ import asyncio  # noqa: E402
 
 
 async def main() -> None:
-    # Downloads are serialized by a semaphore, so a tiny thread pool is enough —
-    # and fewer threads means fewer malloc arenas and lower memory.
+    # Downloads are serialized by a semaphore, so a single worker thread is
+    # enough. One thread means one malloc arena and the lowest possible memory
+    # footprint, which keeps the bot alive on a small (~512 MB) host.
     asyncio.get_running_loop().set_default_executor(
-        ThreadPoolExecutor(max_workers=2, thread_name_prefix='worker')
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix='worker')
     )
     await run_tasks()
     await dispatcher.start_polling(bot)
