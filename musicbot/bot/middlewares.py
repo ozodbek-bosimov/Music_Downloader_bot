@@ -121,10 +121,7 @@ class MembershipCheckMiddleware(BaseMiddleware):
                 ],
             ]
         )
-        text = (
-            '<b>Access denied</b>\n\n'
-            f'To use this bot, please subscribe to {REQUIRED_CHANNEL} first.'
-        )
+        text = f'Join {REQUIRED_CHANNEL} to start using the bot 🎧'
 
         if event.message:
             await event.message.answer(text, reply_markup=keyboard)
