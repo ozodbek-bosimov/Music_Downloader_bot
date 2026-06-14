@@ -39,11 +39,10 @@ _USER_AGENT = 'Mozilla/5.0'
 
 
 def _ydl_options() -> dict[str, Any]:
-    # Best available audio-only stream, kept in its native container (usually
-    # .m4a) with no transcoding (FFmpeg is too CPU-heavy for a tiny host).
-    # No video fallback, so file sizes and disk/IO stay small.
+    # Best available audio-only stream. Prefer m4a (no transcoding needed), but
+    # fall back to any audio format — some videos don't offer m4a at all.
     options: dict[str, Any] = {
-        'format': 'bestaudio[ext=m4a]/bestaudio',
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
         'outtmpl': str(TRACKS_PATH / '%(title).200B.%(ext)s'),
         'restrictfilenames': True,
         'quiet': True,
