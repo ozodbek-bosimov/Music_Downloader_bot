@@ -28,32 +28,36 @@ async def stats_handler(message: Message) -> None:
         return
 
     async with async_session() as session:
-        total_users: int = await session.scalar(
-            select(func.count()).select_from(User)
-        ) or 0
+        total_users: int = (
+            await session.scalar(select(func.count()).select_from(User)) or 0
+        )
 
         today_start = datetime.now(UTC).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
-        new_today: int = await session.scalar(
-            select(func.count())
-            .select_from(User)
-            .where(User.joined_date >= today_start)
-        ) or 0
+        new_today: int = (
+            await session.scalar(
+                select(func.count())
+                .select_from(User)
+                .where(User.joined_date >= today_start)
+            )
+            or 0
+        )
 
-        banned_users: int = await session.scalar(
-            select(func.count())
-            .select_from(User)
-            .where(User.is_banned.is_(True))
-        ) or 0
+        banned_users: int = (
+            await session.scalar(
+                select(func.count()).select_from(User).where(User.is_banned.is_(True))
+            )
+            or 0
+        )
 
-        cached_tracks: int = await session.scalar(
-            select(func.count()).select_from(CachedTrack)
-        ) or 0
+        cached_tracks: int = (
+            await session.scalar(select(func.count()).select_from(CachedTrack)) or 0
+        )
 
-        queue_size: int = await session.scalar(
-            select(func.count()).select_from(DownloadQueue)
-        ) or 0
+        queue_size: int = (
+            await session.scalar(select(func.count()).select_from(DownloadQueue)) or 0
+        )
 
     await message.answer(
         f'<b>Users:</b> {total_users:,} ({new_today} today)\n'
@@ -64,9 +68,7 @@ async def stats_handler(message: Message) -> None:
 
 
 @router.message(Command('broadcast'))
-async def broadcast_handler(
-    message: Message, command: CommandObject, bot: Bot
-) -> None:
+async def broadcast_handler(message: Message, command: CommandObject, bot: Bot) -> None:
     if not _is_admin(message):
         return
 

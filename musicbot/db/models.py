@@ -23,7 +23,6 @@ class User(Base):
     )
 
 
-
 class DownloadQueue(Base):
     __tablename__ = 'download_queue'
 

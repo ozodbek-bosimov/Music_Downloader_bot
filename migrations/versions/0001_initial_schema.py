@@ -33,9 +33,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint('id'),
     )
-    op.create_index(
-        op.f('ix_user_telegram_id'), 'user', ['telegram_id'], unique=True
-    )
+    op.create_index(op.f('ix_user_telegram_id'), 'user', ['telegram_id'], unique=True)
 
     op.create_table(
         'download_queue',

@@ -20,9 +20,7 @@ REQUIRED_CHANNEL: Final[str] = os.getenv('REQUIRED_CHANNEL', '@ozodbekswe')
 # Telegram user IDs that have access to admin commands (/stats, /broadcast,
 # /ban, /unban).  Comma-separated in the environment variable.
 ADMIN_IDS: Final[list[int]] = [
-    int(uid.strip())
-    for uid in os.getenv('ADMIN_IDS', '').split(',')
-    if uid.strip()
+    int(uid.strip()) for uid in os.getenv('ADMIN_IDS', '').split(',') if uid.strip()
 ]
 
 

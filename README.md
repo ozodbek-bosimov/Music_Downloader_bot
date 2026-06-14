@@ -1,34 +1,63 @@
-# Music Downloader Telegram Bot
+# 🎧 Music Downloader Telegram Bot
 
 A lightweight Telegram bot that downloads music from YouTube. Send it a **song
 name**, a **YouTube link**, or a single **Spotify track link** and it replies
-with the audio file.
+with the audio — complete with title, artist and cover art.
 
-Built to run on tiny hosts (tested on a 256 MB RAM / 0.25 CPU / 1 GB disk plan).
-
-> For educational use only. It downloads publicly available YouTube content. The
-> author isn't responsible for how it's used.
+Built to run on tiny hosts (tested on a **256 MB RAM / 0.25 CPU / 1 GB disk**
+free plan).
 
 ## Features
 
-- Search by name, YouTube links, and Spotify **track** links (via metadata, no
-  Spotify API needed).
-- **Caching** — each track's Telegram `file_id` is stored, so repeat requests
-  are instant and never re-hit YouTube. Only the id string is kept, no audio.
-- Audio-only downloads (`.m4a`), no transcoding — light on CPU and disk.
-- Ephemeral storage — files are deleted right after sending.
-- Clear, specific replies on every failure; background loops never crash.
+- **Search by name**, **YouTube links**, and **Spotify track links** (resolved
+  via public metadata — no Spotify API key needed).
+- **Instant repeats.** Every sent track's Telegram `file_id` is cached, so the
+  same request is served instantly and never re-hits YouTube. Only the id
+  string is stored — no audio is kept.
+- **Audio-only, no transcoding** (`.m4a`) — light on CPU and disk.
+- **Pre-download size check** — oversized tracks are rejected from metadata
+  before any bytes are downloaded.
+- **Ephemeral storage** — files are deleted right after sending.
+- **Admin tools** (optional): `/stats`, `/broadcast`, `/ban`, `/unban`.
+- **Required-channel gate** (optional): force users to join your channel first.
+- **Resilient** — background loops never crash, and every failure replies with
+  a clear, specific message.
 
 ## How it works
 
 ```
 message → handlers.py → queued in Postgres → worker.py picks it up
-        → cache hit?  → send instantly
+        → cache hit?  → send instantly (file_id)
         → cache miss? → downloader (yt-dlp) → send audio → cache the file_id
 ```
 
-`YouTube link` and `Spotify track` are resolved through YouTube **search**
-(via the link's title), which YouTube blocks far less than direct extraction.
+YouTube links and Spotify tracks are resolved through YouTube **search** (using
+the link's title), which YouTube blocks far less than direct extraction.
+
+## Project layout
+
+```
+main.py                     entry point  (python main.py)
+musicbot/
+    config.py               settings loaded from environment / .env
+    cache.py                Telegram file_id cache (skip re-downloading)
+    worker.py               background queue + cleanup
+    bot/
+        handlers.py         /start, /help, search, subscription callback
+        admin.py            /stats, /broadcast, /ban, /unban
+        middlewares.py      user creation, ban gate, channel gate
+        sender.py           sends the audio, then deletes it locally
+        session.py          retry-on-rate-limit HTTP session
+    db/
+        __init__.py         engine + session factory
+        models.py           User, DownloadQueue, CachedTrack
+    downloader/
+        client.py           Downloader: resolve a query and download audio
+        models.py           lightweight Song
+        exceptions.py
+migrations/                 Alembic migrations
+docs/                       privacy policy
+```
 
 ## Requirements
 
@@ -45,7 +74,7 @@ python -m venv env
 source install.sh          # installs deps, asks for tokens, writes .env, migrates
 ```
 
-Run it (only one instance at a time):
+Run it (only **one** instance at a time — Telegram allows a single poller):
 
 ```bash
 source env/bin/activate
@@ -54,31 +83,39 @@ python main.py
 
 ## Configuration
 
-Set via environment / `.env`.
+Set via environment / `.env` (see [`.env.example`](.env.example)).
 
-**Required**
+**Required:** `BOT_TOKEN`, `POSTGRESQL_DATABASE_HOST`, `POSTGRESQL_DATABASE_NAME`,
+`POSTGRESQL_DATABASE_USER`, `POSTGRESQL_DATABASE_PASSWORD`.
 
-| Variable | Description |
-| --- | --- |
-| `BOT_TOKEN` | Telegram bot token from @BotFather |
-| `POSTGRESQL_DATABASE_HOST` | Database host |
-| `POSTGRESQL_DATABASE_NAME` | Database name |
-| `POSTGRESQL_DATABASE_USER` | Database user |
-| `POSTGRESQL_DATABASE_PASSWORD` | Database password |
-
-**Optional** (defaults shown)
+**Optional** (defaults shown):
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `ADMIN_IDS` | — | Comma-separated Telegram IDs allowed to use admin commands |
+| `REQUIRED_CHANNEL` | — | Channel users must join first (e.g. `@mychannel`) |
 | `MAX_PARALLEL_DOWNLOADS` | `1` | Concurrent downloads |
-| `MAX_AUDIO_FILESIZE` | `52428800` | Skip files bigger than this (Telegram's 50 MB limit) |
-| `MAX_TRACK_STORAGE_SIZE` | `209715200` | Disk cleanup cap (200 MB) |
+| `MAX_AUDIO_FILESIZE` | `52428800` | Skip audio bigger than this (50 MB Telegram limit) |
+| `MAX_TRACK_STORAGE_SIZE` | `209715200` | On-disk cache cap (200 MB) |
 | `CACHE_MAX_ENTRIES` | `5000` | Max cached tracks before oldest are dropped |
 | `LOG_TO_FILE` | `0` | `1` to also write rotating logs in `logs/` |
 | `CONVERT_TO_MP3` | `0` | `1` to transcode to MP3 (needs FFmpeg) |
 | `FFMPEG_LOCATION` | — | FFmpeg path (only if converting) |
 | `YTDLP_PLAYER_CLIENTS` | — | Override yt-dlp YouTube clients (comma-separated) |
 | `YTDLP_COOKIEFILE` | — | YouTube cookies file (see below) |
+
+## Commands
+
+Public:
+
+- `/start` — welcome and usage
+- `/help` — how to use the bot
+
+Admin (only for IDs in `ADMIN_IDS`):
+
+- `/stats` — user, cache and queue counts
+- `/broadcast <text>` — send a message to all users (or reply to a message with `/broadcast`)
+- `/ban <id>` / `/unban <id>` — block or unblock a user
 
 ## YouTube blocking
 
@@ -90,15 +127,24 @@ keep yt-dlp updated (`poetry update yt-dlp`).
 
 ## Deployment
 
-Any host that can run a long-lived Python process plus PostgreSQL works:
+Any host that can run a long-lived Python process plus PostgreSQL works
+(a VPS, a small cloud instance, or a free tier with ~256 MB RAM).
 
-1. Create a PostgreSQL database and put its credentials in `.env`.
-2. Install deps and migrate: `poetry install` then `alembic upgrade head`
+1. **Database** — create a PostgreSQL database and put its credentials in
+   `.env`.
+2. **Install & migrate** — `poetry install` then `alembic upgrade head`
    (`install.sh` does both).
-3. Run `python main.py` under a process supervisor so it restarts on failure.
-   Run **only one** instance (Telegram allows a single poller per bot).
+3. **Run under a supervisor** — start `python main.py` with something that
+   restarts it on failure (systemd, supervisor, pm2, your host's "process"
+   feature, etc.). Run **only one** instance — Telegram allows a single poller
+   per bot, so a second one causes `TelegramConflictError`.
 
-Free-tier walkthrough: see [docs/alwaysdata.md](docs/alwaysdata.md).
+Tips for reliability:
+
+- **YouTube blocking:** on datacenter IPs, set `YTDLP_COOKIEFILE` (see above).
+- **Keep yt-dlp fresh:** `poetry update yt-dlp` periodically, then restart.
+- **Logs:** go to stdout by default (your host captures them). Set
+  `LOG_TO_FILE=1` to also keep rotating files in `logs/`.
 
 ## License
 
