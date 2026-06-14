@@ -12,6 +12,19 @@ BASE_DIR: Final[Path] = Path(__file__).resolve().parent.parent
 
 BOT_TOKEN: Final[str] = os.environ['BOT_TOKEN']
 
+# Channel users must be subscribed to before they can use the bot (e.g.
+# '@mychannel'). Leave empty to disable the requirement. The bot must be an
+# admin of the channel for the membership check to work.
+REQUIRED_CHANNEL: Final[str] = os.getenv('REQUIRED_CHANNEL', '@ozodbekswe')
+
+# Telegram user IDs that have access to admin commands (/stats, /broadcast,
+# /ban, /unban).  Comma-separated in the environment variable.
+ADMIN_IDS: Final[list[int]] = [
+    int(uid.strip())
+    for uid in os.getenv('ADMIN_IDS', '').split(',')
+    if uid.strip()
+]
+
 
 POSTGRESQL_DATABASE_HOST: Final[str] = os.environ['POSTGRESQL_DATABASE_HOST']
 POSTGRESQL_DATABASE_NAME: Final[str] = os.environ['POSTGRESQL_DATABASE_NAME']

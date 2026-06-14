@@ -57,9 +57,7 @@ def _ydl_options() -> dict[str, Any]:
     }
 
     if YTDLP_PLAYER_CLIENTS:
-        options['extractor_args'] = {
-            'youtube': {'player_client': YTDLP_PLAYER_CLIENTS}
-        }
+        options['extractor_args'] = {'youtube': {'player_client': YTDLP_PLAYER_CLIENTS}}
 
     if CONVERT_TO_MP3:
         options['postprocessors'] = [
@@ -127,9 +125,7 @@ def _spotify_track(url: str) -> tuple[str, Song, str | None]:
     # 2) Fallback: the oEmbed endpoint reliably returns the title and a cover.
     if not title or not cover_url:
         try:
-            data = json.loads(
-                _http_get(f'https://open.spotify.com/oembed?url={url}')
-            )
+            data = json.loads(_http_get(f'https://open.spotify.com/oembed?url={url}'))
             title = title or data.get('title')
             cover_url = cover_url or data.get('thumbnail_url')
         except Exception:
@@ -215,9 +211,7 @@ def _download_cover(item: dict[str, Any], cover_url: str | None) -> Path | None:
     if not item.get('id'):
         return None
 
-    return _download_image(
-        f'https://i.ytimg.com/vi/{video_id}/mqdefault.jpg', video_id
-    )
+    return _download_image(f'https://i.ytimg.com/vi/{video_id}/mqdefault.jpg', video_id)
 
 
 def _song_from_item(
@@ -265,12 +259,17 @@ def _raise_for_message(text: str) -> None:
     # Unrecognised: let the caller fall back to the generic "couldn't download".
 
 
-def _exceeds_size_limit(item: dict[str, Any]) -> bool:
+def _item_filesize(item: dict[str, Any]) -> int | None:
+    """Best-effort file size from metadata (before or after download)."""
+    # After download, the size lives inside requested_downloads.
     downloads = item.get('requested_downloads')
     if downloads:
         size = downloads[0].get('filesize') or downloads[0].get('filesize_approx')
-        return bool(size and size > MAX_AUDIO_FILESIZE)
-    return False
+        if size:
+            return int(size)
+    # Before download (extract_info with download=False), the size is at the
+    # top level of the selected format dict.
+    return int(item.get('filesize') or item.get('filesize_approx') or 0) or None
 
 
 def _download(
@@ -278,37 +277,55 @@ def _download(
 ) -> list[tuple[Song, Path | None]]:
     """Download a single track from YouTube (audio only).
 
-    ``target`` is either a YouTube URL or a ``ytsearch1:...`` expression. When a
-    ``label`` is given (e.g. metadata scraped from Spotify) it's used to name the
-    result instead of YouTube's own (often noisy) title, and ``cover_url`` (if
-    given) is used as the cover instead of YouTube's thumbnail.
-
-    Raises a specific ``DownloadError`` subclass when the reason is known
-    (blocked, too large, unavailable); otherwise returns an empty list.
+    Two-phase to avoid wasting bandwidth/disk on oversized tracks:
+    1. ``extract_info(download=False)`` fetches metadata only. If the selected
+       audio stream already exceeds ``MAX_AUDIO_FILESIZE`` we reject it before
+       a single byte is written (no leftover ``.part`` files).
+    2. ``process_ie_result(download=True)`` downloads using the already-fetched
+       metadata, so YouTube isn't queried again. It returns a NEW dict carrying
+       the saved file path, so we must keep that return value.
     """
     try:
         with yt_dlp.YoutubeDL(_ydl_options()) as ydl:
-            info = ydl.extract_info(target, download=True)
+            # Phase 1: metadata only.
+            info = ydl.extract_info(target, download=False)
+            if not info:
+                return []
+
+            entries = info.get('entries')
+            items = [
+                item for item in (entries if entries is not None else [info]) if item
+            ]
+            if not items:
+                return []
+
+            # Pre-download size gate.
+            for item in items:
+                size = _item_filesize(item)
+                if size and size > MAX_AUDIO_FILESIZE:
+                    raise TrackTooLargeError
+
+            # Phase 2: download. process_ie_result returns the processed dict
+            # (with the saved file path); the original item is not mutated.
+            downloaded = [
+                ydl.process_ie_result(item, download=True) or item for item in items
+            ]
     except yt_dlp.utils.DownloadError as error:
         _raise_for_message(str(error))
         return []
 
-    if not info:
-        return []
-
-    entries = info.get('entries')
-    items = [item for item in (entries if entries is not None else [info]) if item]
-
-    # Got metadata but nothing was actually saved (e.g. the file was skipped
-    # because it exceeds max_filesize). Explain why if we can.
-    if items and all(_downloaded_path(item) is None for item in items):
-        if any(_exceeds_size_limit(item) for item in items):
-            raise TrackTooLargeError
+    # Metadata came through but nothing was saved (e.g. the real size was only
+    # known mid-download and hit the max_filesize limit).
+    if all(_downloaded_path(item) is None for item in downloaded):
+        for item in downloaded:
+            size = _item_filesize(item)
+            if size and size > MAX_AUDIO_FILESIZE:
+                raise TrackTooLargeError
         return []
 
     return [
         (_song_from_item(item, label, cover_url), _downloaded_path(item))
-        for item in items
+        for item in downloaded
     ]
 
 

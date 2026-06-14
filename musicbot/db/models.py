@@ -1,4 +1,4 @@
-from sqlalchemy import TIMESTAMP, text
+from sqlalchemy import TIMESTAMP, Boolean, text
 from sqlalchemy.dialects.postgresql import BIGINT
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -15,9 +15,13 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(BIGINT(), primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BIGINT(), unique=True, index=True)
+    is_banned: Mapped[bool] = mapped_column(
+        Boolean(), default=False, server_default=text('FALSE')
+    )
     joined_date: Mapped[datetime] = mapped_column(
         TIMESTAMP(), server_default=text('NOW()')
     )
+
 
 
 class DownloadQueue(Base):

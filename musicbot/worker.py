@@ -23,6 +23,7 @@ from typing import Any
 import asyncio
 import logging
 import os
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +31,30 @@ logger = logging.getLogger(__name__)
 async def cleanup_old_tracks() -> None:
     while True:
         try:
-            tracks: list[Path] = [
-                TRACKS_PATH / track_path for track_path in os.listdir(TRACKS_PATH)
+            now = time.time()
+            entries: list[Path] = [
+                TRACKS_PATH / name for name in os.listdir(TRACKS_PATH)
             ]
-            total_size: int = sum(os.path.getsize(track) for track in tracks)
 
+            # 1) Remove orphaned partial/temp files left by aborted downloads
+            #    (e.g. a file that hit the 50 MB limit). A download in progress
+            #    keeps writing, so we only drop temp files untouched for a while.
+            tracks: list[Path] = []
+            for path in entries:
+                is_temp = path.suffix in ('.part', '.ytdl', '.temp', '.tmp') or (
+                    '.part-Frag' in path.name
+                )
+                if is_temp:
+                    with suppress(OSError):
+                        if now - os.path.getmtime(path) > 300:  # 5 minutes
+                            os.remove(path)
+                else:
+                    tracks.append(path)
+
+            # 2) Cap the total size of finished tracks (least-recently-used go first).
+            total_size: int = sum(
+                os.path.getsize(track) for track in tracks if track.exists()
+            )
             if total_size > MAX_TRACK_STORAGE_SIZE:
                 for track in sorted(tracks, key=lambda track: os.path.getatime(track)):
                     track_size: int = os.path.getsize(track)
@@ -114,17 +134,16 @@ async def _download_and_serve(
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
-                    "⚠️ Spotify albums and playlists aren't supported.\n\n"
+                    "Spotify albums and playlists aren't supported.\n\n"
                     'Please send a single Spotify track link, a YouTube link, '
-                    'or just the song name (for example: <code>Shakira Waka '
-                    'Waka</code>).'
+                    'or just the song name (for example: <code>Hans Zimmer - Cornfield Chase</code>).'
                 ),
             )
         except TrackTooLargeError:
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
-                    "⚠️ This track is larger than 50 MB, which is Telegram's "
+                    "This track is larger than 50 MB, which is Telegram's "
                     "upload limit for bots, so I can't send it."
                 ),
             )
@@ -132,7 +151,7 @@ async def _download_and_serve(
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
-                    '⏳ YouTube is temporarily blocking downloads from this '
+                    'YouTube is temporarily blocking downloads from this '
                     'server.\n\nThis is usually short-lived — please try this '
                     'track again in a few minutes.'
                 ),
@@ -141,7 +160,7 @@ async def _download_and_serve(
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
-                    "⚠️ This video isn't available — it may be private, "
+                    "This video isn't available — it may be private, "
                     'removed, or blocked in this region.\n\nTry a different '
                     'link, or search by the song name.'
                 ),
@@ -150,9 +169,9 @@ async def _download_and_serve(
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
-                    '⚠️ Something went wrong while downloading this track.\n\n'
+                    'Something went wrong while downloading this track.\n\n'
                     'Please try again in a moment, or search by the song name '
-                    '(for example: <code>Shakira Waka Waka</code>).'
+                    '(for example: <code>Hans Zimmer - Cornfield Chase</code>).'
                 ),
             )
 

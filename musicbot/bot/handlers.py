@@ -1,14 +1,19 @@
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
-from aiogram.types import Chat, Message, User
+from aiogram.filters import Command, CommandStart
+from aiogram.types import CallbackQuery, Chat, Message, User
 
-from musicbot.config import BOT_TOKEN
+from musicbot.config import BOT_TOKEN, REQUIRED_CHANNEL
 from musicbot.db import async_session
 from musicbot.db.models import DownloadQueue
 
-from .middlewares import CreateUserMiddleware
+from .admin import router as admin_router
+from .middlewares import (
+    CreateUserMiddleware,
+    MembershipCheckMiddleware,
+    is_channel_member,
+)
 from .session import ResilientSession
 
 bot = Bot(
@@ -20,28 +25,56 @@ bot = Bot(
 )
 
 dispatcher = Dispatcher(bot=bot)
+dispatcher.include_router(admin_router)
 dispatcher.update.middleware(CreateUserMiddleware())
+dispatcher.update.middleware(MembershipCheckMiddleware())
+
+USAGE_TEXT = (
+    'Send me:\n'
+    '• a song name (e.g. <code>Hans Zimmer - Cornfield Chase</code>)\n'
+    '• a YouTube link\n'
+    '• a single Spotify <b>track</b> link\n\n'
+    "and I'll send you the audio.\n\n"
+    '<b>Note:</b> Spotify albums and playlists are not supported — '
+    'send individual tracks or search by name.'
+)
+if REQUIRED_CHANNEL:
+    USAGE_TEXT += (
+        f'\n\nSubscribe to {REQUIRED_CHANNEL} for programming & algorithms.'
+    )
 
 
 @dispatcher.message(CommandStart())
 async def start_command_handler(message: Message, event_from_user: User) -> None:
     await message.answer(
-        (
-            f'<b>Hi, {event_from_user.full_name}!</b>\n\n'
-            "I'm a free Telegram bot that downloads music from YouTube.\n\n"
-            'Just send me:\n'
-            '• a song name (e.g. <code>Shakira Waka Waka</code>)\n'
-            '• a YouTube link\n'
-            '• a single Spotify <b>track</b> link\n\n'
-            "You can also subscribe to @ozodbek, the developer's Telegram channel, "
-            'to stay updated on news and other projects.\n\n'
-            '<b>Note:</b> Spotify albums and playlists are not supported — '
-            'send individual tracks or search by name.'
-        ),
+        f'<b>Hi, {event_from_user.full_name}!</b>\n\n'
+        "I'm a free bot that downloads music from YouTube.\n\n" + USAGE_TEXT
     )
 
 
-@dispatcher.message()
+@dispatcher.message(Command('help'))
+async def help_command_handler(message: Message) -> None:
+    await message.answer(USAGE_TEXT)
+
+
+@dispatcher.callback_query(F.data == 'check_subscription')
+async def check_subscription_handler(callback: CallbackQuery) -> None:
+    if not await is_channel_member(bot, callback.from_user.id):
+        await callback.answer(
+            "You haven't subscribed to the channel yet. Please subscribe first.",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer()
+    if isinstance(callback.message, Message):
+        await callback.message.delete()
+        await callback.message.answer(
+            '<b>Thank you!</b>\n\nYou can now use the bot — send a song name or a link.'
+        )
+
+
+@dispatcher.message(F.text & ~F.text.startswith('/'))
 async def message_handler(message: Message, event_chat: Chat) -> None:
     query: str | None = message.text
 

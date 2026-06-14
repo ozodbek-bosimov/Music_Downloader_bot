@@ -58,19 +58,17 @@ async def reply_song(
         _remove(song.thumbnail_path)
 
         text = (
-            f'⚠️ <code>{song.display_name}</code> is larger than 50 MB '
+            f'<code>{song.display_name}</code> is larger than 50 MB '
             "(Telegram's limit for bots), so I can't send it."
             if too_large
-            else f"⚠️ I couldn't download <code>{song.display_name}</code>. "
+            else f"I couldn't download <code>{song.display_name}</code>. "
             'Please try again.'
         )
         await bot.send_message(**bot_message_kwargs, text=text)
         return None
 
 
-async def send_cached_audio(
-    chat_id: int, user_message_id: int, file_id: str
-) -> None:
+async def send_cached_audio(chat_id: int, user_message_id: int, file_id: str) -> None:
     """Re-send a previously uploaded audio by its file_id (no download). The
     original title/performer/duration/thumbnail are preserved by Telegram."""
     await bot.send_audio(
