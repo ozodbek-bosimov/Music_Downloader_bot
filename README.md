@@ -18,7 +18,7 @@ free plan).
 - **Pre-download size check** — oversized tracks are rejected from metadata
   before any bytes are downloaded.
 - **Ephemeral storage** — files are deleted right after sending.
-- **Admin tools** (optional): `/stats`, `/broadcast`, `/ban`, `/unban`.
+- **Admin tools** (optional): `/stats` and `/broadcast`.
 - **Required-channel gate** (optional): force users to join your channel first.
 - **Resilient** — background loops never crash, and every failure replies with
   a clear, specific message.
@@ -44,8 +44,8 @@ musicbot/
     worker.py               background queue + cleanup
     bot/
         handlers.py         /start, /help, search, subscription callback
-        admin.py            /stats, /broadcast, /ban, /unban
-        middlewares.py      user creation, ban gate, channel gate
+        admin.py            /stats, /broadcast
+        middlewares.py      user creation, channel gate
         sender.py           sends the audio, then deletes it locally
         session.py          retry-on-rate-limit HTTP session
     db/
@@ -115,7 +115,6 @@ Admin (only for IDs in `ADMIN_IDS`):
 
 - `/stats` — user, cache and queue counts
 - `/broadcast <text>` — send a message to all users (or reply to a message with `/broadcast`)
-- `/ban <id>` / `/unban <id>` — block or unblock a user
 
 ## YouTube blocking
 

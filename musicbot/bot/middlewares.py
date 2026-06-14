@@ -66,12 +66,6 @@ class CreateUserMiddleware(BaseMiddleware):
         data['user'] = user
         data['is_new_user'] = is_new_user
 
-        # Block banned users, but let admins through so /unban still works.
-        if user is not None and user.is_banned and user_telegram_id not in ADMIN_IDS:
-            if event.message:
-                await event.message.answer('You have been banned from using this bot.')
-            return None
-
         return await handler(event, data)
 
 

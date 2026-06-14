@@ -44,13 +44,6 @@ async def stats_handler(message: Message) -> None:
             or 0
         )
 
-        banned_users: int = (
-            await session.scalar(
-                select(func.count()).select_from(User).where(User.is_banned.is_(True))
-            )
-            or 0
-        )
-
         cached_tracks: int = (
             await session.scalar(select(func.count()).select_from(CachedTrack)) or 0
         )
@@ -61,7 +54,6 @@ async def stats_handler(message: Message) -> None:
 
     await message.answer(
         f'<b>Users:</b> {total_users:,} ({new_today} today)\n'
-        f'<b>Banned:</b> {banned_users:,}\n'
         f'<b>Cached tracks:</b> {cached_tracks:,}\n'
         f'<b>Download queue:</b> {queue_size:,}'
     )
@@ -88,11 +80,7 @@ async def broadcast_handler(message: Message, command: CommandObject, bot: Bot) 
 
     async with async_session() as session:
         user_ids: list[int] = list(
-            (
-                await session.scalars(
-                    select(User.telegram_id).where(User.is_banned.is_(False))
-                )
-            ).all()
+            (await session.scalars(select(User.telegram_id))).all()
         )
 
     sent = 0
@@ -117,55 +105,3 @@ async def broadcast_handler(message: Message, command: CommandObject, bot: Bot) 
     await progress.edit_text(
         f'Broadcast complete: {sent:,} delivered, {failed:,} failed.'
     )
-
-
-@router.message(Command('ban'))
-async def ban_handler(message: Message) -> None:
-    if not _is_admin(message):
-        return
-
-    args = (message.text or '').split()
-    if len(args) < 2 or not args[1].isdigit():
-        await message.answer('Usage: /ban &lt;telegram_user_id&gt;')
-        return
-
-    target_id = int(args[1])
-
-    async with async_session() as session:
-        user: User | None = await session.scalar(
-            select(User).where(User.telegram_id == target_id)
-        )
-        if not user:
-            await message.answer(f'User {target_id} not found.')
-            return
-
-        user.is_banned = True
-        await session.commit()
-
-    await message.answer(f'User {target_id} has been banned.')
-
-
-@router.message(Command('unban'))
-async def unban_handler(message: Message) -> None:
-    if not _is_admin(message):
-        return
-
-    args = (message.text or '').split()
-    if len(args) < 2 or not args[1].isdigit():
-        await message.answer('Usage: /unban &lt;telegram_user_id&gt;')
-        return
-
-    target_id = int(args[1])
-
-    async with async_session() as session:
-        user: User | None = await session.scalar(
-            select(User).where(User.telegram_id == target_id)
-        )
-        if not user:
-            await message.answer(f'User {target_id} not found.')
-            return
-
-        user.is_banned = False
-        await session.commit()
-
-    await message.answer(f'User {target_id} has been unbanned.')
