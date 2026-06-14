@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dotenv import load_dotenv
 
 from pathlib import Path
@@ -35,18 +37,16 @@ DATABASE_URL: Final[str] = (
 )
 
 # --- Download tuning -------------------------------------------------------
-# Defaults are intentionally light so the bot runs comfortably on small hosts.
-# Override any of these via environment variables on a bigger machine.
+# Defaults are tuned for a dedicated VPS (4 OCPU, 24 GB RAM). Adjust via
+# environment variables if you deploy on a smaller machine.
 
-# How many downloads may run at the same time. Keep it low on small/shared
-# CPUs so concurrent downloads don't starve each other (and RAM stays low).
-MAX_PARALLEL_DOWNLOADS: Final[int] = int(os.getenv('MAX_PARALLEL_DOWNLOADS', '1'))
+# How many downloads may run at the same time.
+MAX_PARALLEL_DOWNLOADS: Final[int] = int(os.getenv('MAX_PARALLEL_DOWNLOADS', '4'))
 
-# Safety net for the on-disk cache. Tracks are normally deleted right after
-# being sent, so this only matters for leftovers from failed sends. Keep it
-# well under the 1 GB free-tier disk.
+# Maximum on-disk cache for finished tracks. Tracks are deleted after being
+# sent, so this only matters for leftovers from failed sends.
 MAX_TRACK_STORAGE_SIZE: Final[int] = int(
-    os.getenv('MAX_TRACK_STORAGE_SIZE', '209715200')  # 200 MB
+    os.getenv('MAX_TRACK_STORAGE_SIZE', '2147483648')  # 2 GB
 )
 
 # Telegram bots can upload files up to 50 MB. Reject larger downloads early.

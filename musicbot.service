@@ -2,26 +2,15 @@
 Description=Music Downloader Telegram Bot
 After=network-online.target postgresql.service
 Wants=network-online.target
-# Keep restarting indefinitely instead of giving up after a few quick crashes.
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# Adjust User and paths to match your server.
 User=opc
 WorkingDirectory=/home/opc/Music_Downloader_bot
 ExecStart=/home/opc/Music_Downloader_bot/env/bin/python /home/opc/Music_Downloader_bot/main.py
-# Always come back up — on crash, OOM, or a clean exit.
 Restart=always
 RestartSec=5
-
-# --- Memory safety on a 1 GB host -----------------------------------------
-# The bot normally peaks around ~250 MB, leaving room for the OS and Postgres.
-# MemoryHigh throttles and reclaims before things get tight; MemoryMax is a
-# hard cap that restarts only this service if it ever runs away, so a leak can
-# never take the whole 1 GB VM down.
-MemoryHigh=450M
-MemoryMax=600M
 
 [Install]
 WantedBy=multi-user.target

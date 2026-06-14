@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from musicbot.config import DATABASE_URL

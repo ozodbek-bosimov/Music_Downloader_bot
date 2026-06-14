@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from aiogram import Bot, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject

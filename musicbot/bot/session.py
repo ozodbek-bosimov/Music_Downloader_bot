@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from aiogram import Bot
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramRetryAfter

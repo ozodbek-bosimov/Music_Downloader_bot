@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from aiogram.types import FSInputFile
 
 from musicbot.config import MAX_AUDIO_FILESIZE

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 

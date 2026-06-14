@@ -1,64 +1,49 @@
-# Deploying on a Linux VPS
+# Deploying on Ubuntu 24.04 (ARM64)
 
-This guide sets the bot up as a `systemd` service on a small Linux VPS
-(tested on an Oracle Cloud **Always Free** VM: 1 OCPU, 1 GB RAM). Commands use
-`dnf` (Oracle Linux / RHEL); on Ubuntu/Debian use `apt` equivalents.
+Tested on Oracle Cloud **Always Free** VM.Standard.A1.Flex (4 OCPU, 24 GB RAM).
 
 ## 1. System packages
 
 ```bash
-sudo dnf install -y python3.12 git postgresql-server postgresql-contrib
-# FFmpeg is only needed if you set CONVERT_TO_MP3=1.
+sudo apt update && sudo apt install -y postgresql postgresql-contrib git python3-pip python3-venv
 ```
 
-## 2. Swap (important on a small-RAM host)
-
-The bot peaks around ~250 MB, but YouTube extraction is bursty. On a 1 GB VM a
-little swap turns a rare memory spike into a brief slowdown instead of an OOM
-kill — a cheap, worthwhile reliability win.
+## 2. PostgreSQL
 
 ```bash
-# Create a 1 GB swap file (skip if the VM already has swap — check `free -h`).
-sudo fallocate -l 1G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+sudo -u postgres psql -c "CREATE USER musicbot WITH PASSWORD 'your-password';"
+sudo -u postgres psql -c "CREATE DATABASE musicbot OWNER musicbot;"
 ```
 
-## 3. PostgreSQL
+## 3. Get the code
 
 ```bash
-sudo postgresql-setup --initdb
-sudo systemctl enable --now postgresql
-
-sudo -u postgres psql <<'SQL'
-CREATE USER musicbot WITH PASSWORD 'choose-a-password';
-CREATE DATABASE musicbot OWNER musicbot;
-SQL
+cd ~
+git clone <your-repo-url> Music_Downloader_bot
+cd Music_Downloader_bot
+python3 -m venv env
+source env/bin/activate
+pip install poetry
+poetry install --only main
 ```
 
-## 4. Get the code
+## 4. Configure
 
 ```bash
-git clone <your-repo-url> ~/Music_Downloader_bot
-cd ~/Music_Downloader_bot
-python3.12 -m venv env
-source install.sh        # installs deps, asks for tokens, writes .env, migrates
+cp .env.example .env
+nano .env
 ```
 
-When prompted, use the database details from step 2
-(host `localhost`, name `musicbot`, user `musicbot`, your password).
+Fill in `BOT_TOKEN`, database credentials (`localhost`, `musicbot`, `musicbot`,
+your password), `ADMIN_IDS`, and optionally `REQUIRED_CHANNEL`.
 
-Optionally edit `.env` to add `ADMIN_IDS`, `REQUIRED_CHANNEL`, or
-`YTDLP_COOKIEFILE`. The defaults (one download at a time) are tuned for a
-small host and keep memory flat for long, unattended uptimes; only raise
-`MAX_PARALLEL_DOWNLOADS` if you have plenty of spare RAM.
+## 5. Run migrations
 
-## 5. systemd service
+```bash
+env/bin/alembic upgrade head
+```
 
-A ready-made unit is in the repo (`musicbot.service`). Edit the `User` and
-paths inside it if needed, then install it:
+## 6. systemd service
 
 ```bash
 sudo cp musicbot.service /etc/systemd/system/musicbot.service
@@ -70,29 +55,29 @@ Check it:
 
 ```bash
 systemctl status musicbot
-journalctl -u musicbot -f      # live logs
+journalctl -u musicbot -f
 ```
 
 > Run **only one** instance of the bot — Telegram allows a single poller, so a
 > second one causes `TelegramConflictError`.
 
-## 6. Updating
+## 7. Updating
 
 ```bash
 cd ~/Music_Downloader_bot
 git pull
 source env/bin/activate
-poetry install                 # if dependencies changed
-poetry update yt-dlp           # keep yt-dlp fresh (YouTube changes often)
-alembic upgrade head           # if there are new migrations
+poetry install
+poetry update yt-dlp
+alembic upgrade head
 sudo systemctl restart musicbot
 ```
 
 ## Notes
 
-- **No inbound ports** are required — the bot only makes outbound requests.
+- **No inbound ports** required — the bot only makes outbound requests.
 - **YouTube blocking:** datacenter IPs sometimes get "Sign in to confirm you're
-  not a bot". Set `YTDLP_COOKIEFILE` to a cookies file from a throwaway account
-  if downloads start failing.
-- **Logs** go to the journal by default. Set `LOG_TO_FILE=1` to also write
-  rotating files under `logs/`.
+  not a bot". Set `YTDLP_COOKIEFILE` to a Netscape-format cookies file if
+  downloads start failing.
+- **Logs** go to journald by default (`journalctl -u musicbot`). Set
+  `LOG_TO_FILE=1` to also write rotating files under `logs/`.

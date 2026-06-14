@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from aiogram import BaseMiddleware
 from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramAPIError

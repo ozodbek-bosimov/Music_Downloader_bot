@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import yt_dlp
 
 from musicbot.config import (

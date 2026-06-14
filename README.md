@@ -4,7 +4,7 @@ A lightweight Telegram bot that downloads music from YouTube. Send it a **song
 name**, a **YouTube link**, or a single **Spotify track link** and it replies
 with the audio — complete with title, artist and cover art.
 
-Lightweight enough for a small VPS or free-tier VM (~1 GB RAM, 1 CPU).
+Lightweight enough for a small VPS or free-tier VM (1+ GB RAM, 1+ CPU).
 
 ## Features
 
@@ -93,9 +93,9 @@ Set via environment / `.env` (see [`.env.example`](.env.example)).
 | --- | --- | --- |
 | `ADMIN_IDS` | — | Comma-separated Telegram IDs allowed to use admin commands |
 | `REQUIRED_CHANNEL` | — | Channel users must join first (e.g. `@mychannel`) |
-| `MAX_PARALLEL_DOWNLOADS` | `1` | Concurrent downloads |
+| `MAX_PARALLEL_DOWNLOADS` | `4` | Concurrent downloads |
 | `MAX_AUDIO_FILESIZE` | `52428800` | Skip audio bigger than this (50 MB Telegram limit) |
-| `MAX_TRACK_STORAGE_SIZE` | `209715200` | On-disk cache cap (200 MB) |
+| `MAX_TRACK_STORAGE_SIZE` | `2147483648` | On-disk cache cap (2 GB) |
 | `CACHE_MAX_ENTRIES` | `5000` | Max cached tracks before oldest are dropped |
 | `LOG_TO_FILE` | `0` | `1` to also write rotating logs in `logs/` |
 | `CONVERT_TO_MP3` | `0` | `1` to transcode to MP3 (needs FFmpeg) |

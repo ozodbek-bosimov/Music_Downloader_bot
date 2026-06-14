@@ -1,13 +1,13 @@
+from __future__ import annotations
+
 import os
 import sys
 
-# Cap glibc malloc arenas BEFORE anything allocates. On Linux, Python opens a
-# separate malloc arena per thread by default, which inflates RSS in threaded
-# apps (our downloads run in worker threads) and gets the bot OOM-killed on a
-# 256 MB host. Re-exec once with the limit applied. No effect on macOS/Windows.
-if os.name == 'posix' and os.environ.get('MALLOC_ARENA_MAX') != '2':
-    os.environ['MALLOC_ARENA_MAX'] = '2'
-    os.environ.setdefault('MALLOC_TRIM_THRESHOLD_', '65536')
+# On Linux, cap glibc malloc arenas to reduce RSS waste from thread-local
+# heaps. Not needed for macOS/Windows. Once set, re-exec so the environment
+# variable applies to all subsequent allocations.
+if os.name == 'posix' and os.environ.get('MALLOC_ARENA_MAX') != '4':
+    os.environ['MALLOC_ARENA_MAX'] = '4'
     os.execv(sys.executable, [sys.executable, *sys.argv])
 
 from musicbot.bot import bot, dispatcher  # noqa: E402
@@ -18,11 +18,10 @@ import asyncio  # noqa: E402
 
 
 async def main() -> None:
-    # Downloads are serialized by a semaphore, so a single worker thread is
-    # enough. One thread means one malloc arena and the lowest possible memory
-    # footprint, which keeps the bot alive on a small (~512 MB) host.
+    # A pool of 4 threads matches MAX_PARALLEL_DOWNLOADS default, so downloads
+    # can run truly in parallel across threads.
     asyncio.get_running_loop().set_default_executor(
-        ThreadPoolExecutor(max_workers=1, thread_name_prefix='worker')
+        ThreadPoolExecutor(max_workers=4, thread_name_prefix='worker')
     )
     await run_tasks()
     await dispatcher.start_polling(bot)
