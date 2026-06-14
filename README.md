@@ -62,6 +62,7 @@ docs/                       privacy policy
 
 - Python 3.12+
 - PostgreSQL
+- [Deno](https://deno.land) (required by yt-dlp for YouTube JS extraction)
 - FFmpeg only if you set `CONVERT_TO_MP3=1` (off by default)
 
 ## Quick start
