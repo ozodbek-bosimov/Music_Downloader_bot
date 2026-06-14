@@ -60,9 +60,9 @@ def _ydl_options() -> dict[str, Any]:
         'max_filesize': MAX_AUDIO_FILESIZE,
         # Network timeout and retry bounds to prevent hanging indefinitely
         # on slow/throttled datacenter IPs.
-        'socket_timeout': 20,
-        'retries': 3,
-        'fragment_retries': 3,
+        'socket_timeout': 10,
+        'retries': 1,
+        'fragment_retries': 1,
     }
 
     if YTDLP_PLAYER_CLIENTS:
