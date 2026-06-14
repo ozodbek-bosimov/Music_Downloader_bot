@@ -24,11 +24,15 @@ from pathlib import Path
 from typing import Any
 import asyncio
 import json
+import logging
 import re
 import urllib.parse
 import urllib.request
 
+logger = logging.getLogger(__name__)
+
 _download_semaphore = Semaphore(MAX_PARALLEL_DOWNLOADS)
+
 
 # Spotify serves server-rendered metadata (Open Graph tags) to simple,
 # bot-like user agents, but a full browser UA gets a JavaScript app shell with
@@ -54,6 +58,11 @@ def _ydl_options() -> dict[str, Any]:
         # Reject anything bigger than Telegram's upload limit. This (not video
         # length) is what bounds disk and I/O usage per download.
         'max_filesize': MAX_AUDIO_FILESIZE,
+        # Network timeout and retry bounds to prevent hanging indefinitely
+        # on slow/throttled datacenter IPs.
+        'socket_timeout': 20,
+        'retries': 3,
+        'fragment_retries': 3,
     }
 
     if YTDLP_PLAYER_CLIENTS:
@@ -75,6 +84,7 @@ def _ydl_options() -> dict[str, Any]:
         options['cookiefile'] = YTDLP_COOKIEFILE
 
     return options
+
 
 
 def _http_get(url: str) -> str:
@@ -285,11 +295,13 @@ def _download(
        metadata, so YouTube isn't queried again. It returns a NEW dict carrying
        the saved file path, so we must keep that return value.
     """
+    logger.info("Extracting metadata for target: %s", target)
     try:
         with yt_dlp.YoutubeDL(_ydl_options()) as ydl:
             # Phase 1: metadata only.
             info = ydl.extract_info(target, download=False)
             if not info:
+                logger.warning("No metadata found for target: %s", target)
                 return []
 
             entries = info.get('entries')
@@ -297,36 +309,45 @@ def _download(
                 item for item in (entries if entries is not None else [info]) if item
             ]
             if not items:
+                logger.warning("No items resolved for target: %s", target)
                 return []
 
             # Pre-download size gate.
             for item in items:
                 size = _item_filesize(item)
                 if size and size > MAX_AUDIO_FILESIZE:
+                    logger.warning("Rejecting track early: size %s > limit %s", size, MAX_AUDIO_FILESIZE)
                     raise TrackTooLargeError
 
             # Phase 2: download. process_ie_result returns the processed dict
             # (with the saved file path); the original item is not mutated.
+            logger.info("Starting download phase for %d items", len(items))
             downloaded = [
                 ydl.process_ie_result(item, download=True) or item for item in items
             ]
     except yt_dlp.utils.DownloadError as error:
+        logger.error("yt-dlp download error: %s", error)
         _raise_for_message(str(error))
         return []
 
     # Metadata came through but nothing was saved (e.g. the real size was only
     # known mid-download and hit the max_filesize limit).
     if all(_downloaded_path(item) is None for item in downloaded):
+        logger.warning("Metadata retrieved but no downloaded files saved.")
         for item in downloaded:
             size = _item_filesize(item)
             if size and size > MAX_AUDIO_FILESIZE:
                 raise TrackTooLargeError
         return []
 
-    return [
+    results = [
         (_song_from_item(item, label, cover_url), _downloaded_path(item))
         for item in downloaded
     ]
+    for song, path in results:
+        logger.info("Successfully processed song '%s' saved to path: %s", song.name, path)
+    return results
+
 
 
 class Downloader:

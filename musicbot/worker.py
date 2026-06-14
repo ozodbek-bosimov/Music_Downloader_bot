@@ -99,11 +99,13 @@ async def _download_and_serve(
     user_message_id: int,
     bot_message_kwargs: dict[str, Any],
 ) -> None:
+    logger.info("Starting download and serve for query: '%s' in chat: %d", query, chat_id)
     with suppress(TelegramAPIError):
         try:
             songs: list[tuple[Song, Path | None]] = await downloader.download(query)
 
             if songs:
+                logger.info("Found %d tracks to send for query: '%s'", len(songs), query)
                 file_ids = await asyncio.gather(
                     *[
                         reply_song(
@@ -120,8 +122,10 @@ async def _download_and_serve(
                 # Cache single-track results so repeats skip YouTube entirely.
                 sent_file_ids = [file_id for file_id in file_ids if file_id]
                 if len(songs) == 1 and sent_file_ids:
+                    logger.info("Caching file_id for single track: '%s'", query)
                     await store_file_id(query, sent_file_ids[0])
             else:
+                logger.warning("No songs returned for query: '%s'", query)
                 await bot.edit_message_text(
                     **bot_message_kwargs,
                     text=(
@@ -131,6 +135,7 @@ async def _download_and_serve(
                     ),
                 )
         except UnsupportedSpotifyLinkError:
+            logger.warning("Unsupported Spotify link: '%s'", query)
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
@@ -140,6 +145,7 @@ async def _download_and_serve(
                 ),
             )
         except TrackTooLargeError:
+            logger.warning("Track too large error for query: '%s'", query)
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
@@ -148,6 +154,7 @@ async def _download_and_serve(
                 ),
             )
         except DownloadBlockedError:
+            logger.warning("YouTube blocked error for query: '%s'", query)
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
@@ -157,6 +164,7 @@ async def _download_and_serve(
                 ),
             )
         except VideoUnavailableError:
+            logger.warning("Video unavailable error for query: '%s'", query)
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
@@ -165,7 +173,8 @@ async def _download_and_serve(
                     'link, or search by the song name.'
                 ),
             )
-        except Exception:
+        except Exception as e:
+            logger.exception("Unexpected exception downloading query '%s': %s", query, e)
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text=(
@@ -189,6 +198,8 @@ async def process_download_request(request_id: int) -> None:
     user_message_id: int = request.user_message_id
     query: str = request.query
 
+    logger.info("Processing queue request_id: %d, query: '%s' for chat_id: %d", request_id, query, chat_id)
+
     bot_message_kwargs: dict[str, Any] = {
         'chat_id': chat_id,
         'message_id': request.bot_message_id,
@@ -198,7 +209,10 @@ async def process_download_request(request_id: int) -> None:
         served = await _serve_from_cache(
             query, chat_id, user_message_id, bot_message_kwargs
         )
-        if not served:
+        if served:
+            logger.info("Request_id: %d served from cache", request_id)
+        else:
+            logger.info("Request_id: %d cache miss, downloading...", request_id)
             await _download_and_serve(
                 query, chat_id, user_message_id, bot_message_kwargs
             )
@@ -208,6 +222,8 @@ async def process_download_request(request_id: int) -> None:
                 delete(DownloadQueue).where(DownloadQueue.id == request_id)
             )
             await session.commit()
+        logger.info("Finished processing request_id: %d", request_id)
+
 
 
 # Requests that are currently being processed, so the polling loop below
