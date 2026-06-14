@@ -1,6 +1,6 @@
-# Deploying on Ubuntu 24.04 (ARM64)
+# Deploying on Ubuntu 24.04
 
-Tested on Oracle Cloud **Always Free** VM.Standard.A1.Flex (4 OCPU, 24 GB RAM).
+Tested on Oracle Cloud.
 
 ## 1. System packages
 
