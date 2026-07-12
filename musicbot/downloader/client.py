@@ -325,8 +325,34 @@ def _resolve_and_download(query: str) -> list[tuple[Song, Path | None]]:
         search_query, label, cover_url = _spotify_track(query)
         return _download(f'scsearch1:{search_query}', label=label, cover_url=cover_url)
 
-    # Plain text: treat it as a search.
     return _download(f'scsearch1:{query}', label=None, cover_url=None)
+
+
+def _search_tracks(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Quickly fetch top search results from SoundCloud without downloading."""
+    options = _ydl_options()
+    options['extract_flat'] = True
+    
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(f'scsearch{limit}:{query}', download=False)
+            if not info:
+                return []
+            entries = info.get('entries', [])
+            results = []
+            for item in entries:
+                if not item or not item.get('id'):
+                    continue
+                results.append({
+                    'id': item.get('id'),
+                    'title': item.get('title', 'Unknown'),
+                    'artist': item.get('uploader', 'Unknown'),
+                    'duration': item.get('duration', 0),
+                    'url': item.get('url'),
+                })
+            return results
+    except yt_dlp.utils.DownloadError:
+        return []
 
 
 class Downloader:
@@ -335,3 +361,7 @@ class Downloader:
         # it to MAX_PARALLEL_DOWNLOADS at a time.
         async with _download_semaphore:
             return await asyncio.to_thread(_resolve_and_download, query)
+
+    async def search_tracks(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        async with _download_semaphore:
+            return await asyncio.to_thread(_search_tracks, query, limit)

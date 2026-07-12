@@ -65,6 +65,8 @@ async def check_subscription_handler(callback: CallbackQuery) -> None:
         await callback.message.answer('All set 🎧 Send me a song name or a link.')
 
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
 @dispatcher.message(F.text & ~F.text.startswith('/'))
 async def message_handler(message: Message, event_chat: Chat) -> None:
     query: str | None = message.text
@@ -74,13 +76,67 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
 
     bot_message: Message = await message.reply('🔍 Searching…')
 
-    async with async_session() as session:
-        session.add(
-            DownloadQueue(
-                chat_id=event_chat.id,
-                bot_message_id=bot_message.message_id,
-                user_message_id=message.message_id,
-                query=query,
+    is_link = 'http://' in query or 'https://' in query
+
+    if is_link:
+        async with async_session() as session:
+            session.add(
+                DownloadQueue(
+                    chat_id=event_chat.id,
+                    bot_message_id=bot_message.message_id,
+                    user_message_id=message.message_id,
+                    query=query,
+                )
             )
-        )
-        await session.commit()
+            await session.commit()
+        return
+
+    from musicbot.downloader import downloader
+
+    results = await downloader.search_tracks(query, limit=5)
+    
+    if not results:
+        await bot_message.edit_text('🔍 Nothing found. Check the spelling or try a link.')
+        return
+
+    buttons = []
+    for item in results:
+        track_id = item['id']
+        title = item['title']
+        artist = item['artist']
+        duration = item['duration']
+        
+        mins, secs = divmod(duration, 60)
+        dur_str = f"{mins}:{secs:02d}"
+        
+        btn_text = f"{title} - {artist} ({dur_str})"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_sc:{track_id}")])
+        
+    markup = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await bot_message.edit_text('🎧 Choose a track to download:', reply_markup=markup)
+
+
+@dispatcher.callback_query(F.data.startswith('dl_sc:'))
+async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
+    track_id = callback.data.split(':', 1)[1]
+    url = f"https://api.soundcloud.com/tracks/{track_id}"
+    
+    await callback.answer()
+    
+    if isinstance(callback.message, Message):
+        await callback.message.edit_text('⏳ Queued for download...')
+        
+        user_msg_id = callback.message.message_id
+        if callback.message.reply_to_message:
+            user_msg_id = callback.message.reply_to_message.message_id
+
+        async with async_session() as session:
+            session.add(
+                DownloadQueue(
+                    chat_id=callback.message.chat.id,
+                    bot_message_id=callback.message.message_id,
+                    user_message_id=user_msg_id,
+                    query=url,
+                )
+            )
+            await session.commit()
