@@ -125,7 +125,6 @@ async def _download_and_serve(
                         for song, path in songs
                     ]
                 )
-                await bot.delete_message(**bot_message_kwargs)
 
                 # Cache single-track results so repeats skip YouTube entirely.
                 sent_file_ids = [file_id for file_id in file_ids if file_id]
