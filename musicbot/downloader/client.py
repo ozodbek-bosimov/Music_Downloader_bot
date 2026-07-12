@@ -349,7 +349,11 @@ def _search_tracks(query: str, limit: int = 5) -> list[dict[str, Any]]:
                     'artist': item.get('uploader', 'Unknown'),
                     'duration': item.get('duration', 0),
                     'url': item.get('url'),
+                    'views': item.get('view_count') or 0,
                 })
+            
+            # Sort by views descending so the most popular tracks appear first
+            results.sort(key=lambda x: x['views'], reverse=True)
             return results
     except yt_dlp.utils.DownloadError:
         return []
