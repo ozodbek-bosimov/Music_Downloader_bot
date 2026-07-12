@@ -194,16 +194,17 @@ def _download_cover(item: dict[str, Any], cover_url: str | None) -> Path | None:
     """Save a cover image to use as the audio thumbnail.
 
     For Spotify tracks we use the real album art (``cover_url``); otherwise
-    YouTube's small 320x180 JPEG, which fits Telegram's thumbnail limits."""
+    we use the thumbnail provided by the extractor (SoundCloud/YouTube)."""
     video_id = item.get('id') or 'cover'
 
     if cover_url:
         return _download_image(cover_url, video_id)
 
-    if not item.get('id'):
-        return None
+    thumbnail_url = item.get('thumbnail')
+    if thumbnail_url:
+        return _download_image(thumbnail_url, video_id)
 
-    return _download_image(f'https://i.ytimg.com/vi/{video_id}/mqdefault.jpg', video_id)
+    return None
 
 
 def _song_from_item(
