@@ -325,6 +325,9 @@ def _resolve_and_download(query: str) -> list[tuple[Song, Path | None]]:
         search_query, label, cover_url = _spotify_track(query)
         return _download(f'scsearch1:{search_query}', label=label, cover_url=cover_url)
 
+    if query.startswith('http://') or query.startswith('https://'):
+        return _download(query, label=None, cover_url=None)
+
     return _download(f'scsearch1:{query}', label=None, cover_url=None)
 
 
