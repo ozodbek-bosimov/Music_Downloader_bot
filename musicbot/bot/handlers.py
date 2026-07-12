@@ -190,6 +190,15 @@ async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
     track_id = parts[1]
     url = f"https://api.soundcloud.com/tracks/{track_id}"
     
+    for results in SEARCH_CACHE.values():
+        for item in results:
+            if str(item.get('id')) == track_id and item.get('url'):
+                url = item['url']
+                break
+        else:
+            continue
+        break
+    
     await callback.answer()
     
     if isinstance(callback.message, Message):
