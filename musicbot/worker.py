@@ -184,7 +184,7 @@ async def _download_and_serve(
                 try:
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text="⚠️ Albums and playlists aren't supported — send a single track.",
+                        text="Albums and playlists aren't supported — send a single track.",
                         show_alert=True,
                     )
                     alert_shown = True
@@ -203,7 +203,7 @@ async def _download_and_serve(
                 try:
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text='⚠️ This track is over 50 MB — too large for Telegram. Please choose another.',
+                        text='This track is over 50 MB — too large for Telegram. Please choose another.',
                         show_alert=True,
                     )
                     alert_shown = True
@@ -222,7 +222,7 @@ async def _download_and_serve(
                 try:
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text='⚠️ Download temporarily blocked. Try again in a few minutes.',
+                        text='Download temporarily blocked. Try again in a few minutes.',
                         show_alert=True,
                     )
                     alert_shown = True
@@ -241,7 +241,7 @@ async def _download_and_serve(
                 try:
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text="⚠️ This track isn't available — it may be private or region-locked. Try another.",
+                        text="This track isn't available — it may be private or region-locked. Try another.",
                         show_alert=True,
                     )
                     alert_shown = True
@@ -261,7 +261,7 @@ async def _download_and_serve(
                 with suppress(TelegramAPIError):
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text='❌ Something went wrong. Please try again.',
+                        text='Something went wrong. Please try again.',
                         show_alert=True,
                     )
             await bot.edit_message_text(

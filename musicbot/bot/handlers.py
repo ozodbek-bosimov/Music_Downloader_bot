@@ -172,7 +172,7 @@ async def page_callback_handler(callback: CallbackQuery) -> None:
     page = int(page_str)
     
     if search_id not in SEARCH_CACHE:
-        await callback.answer("Qidiruv eskirgan, iltimos boshqadan qidiring.", show_alert=True)
+        await callback.answer("Search expired. Please search again.", show_alert=True)
         return
         
     markup = get_search_keyboard(search_id, page)
