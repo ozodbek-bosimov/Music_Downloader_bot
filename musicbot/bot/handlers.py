@@ -198,11 +198,9 @@ async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
             continue
         break
     
-    await callback.answer()
+    await callback.answer('⏳ Queued for download...')
     
     if isinstance(callback.message, Message):
-        await callback.message.edit_text('⏳ Queued for download...')
-        
         user_msg_id = callback.message.message_id
         if callback.message.reply_to_message:
             user_msg_id = callback.message.reply_to_message.message_id

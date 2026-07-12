@@ -134,38 +134,44 @@ async def _download_and_serve(
                     await store_file_id(query, sent_file_ids[0])
             else:
                 logger.warning("No songs returned for query: '%s'", query)
-                await bot.edit_message_text(
-                    **bot_message_kwargs,
+                await bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=user_message_id,
                     text='🔍 Nothing found. Check the spelling or try a link.',
                 )
         except DRMProtectedError:
             logger.warning("DRM protected error for query: '%s'", query)
-            await bot.edit_message_text(
-                **bot_message_kwargs,
+            await bot.send_message(
+                chat_id=chat_id,
+                reply_to_message_id=user_message_id,
                 text='🔒 This track is DRM protected and cannot be downloaded. Please search again and choose a different version.',
             )
         except UnsupportedSpotifyLinkError:
             logger.warning("Unsupported Spotify link: '%s'", query)
-            await bot.edit_message_text(
-                **bot_message_kwargs,
+            await bot.send_message(
+                chat_id=chat_id,
+                reply_to_message_id=user_message_id,
                 text="Albums and playlists aren't supported — send a single track.",
             )
         except TrackTooLargeError:
             logger.warning("Track too large error for query: '%s'", query)
-            await bot.edit_message_text(
-                **bot_message_kwargs,
+            await bot.send_message(
+                chat_id=chat_id,
+                reply_to_message_id=user_message_id,
                 text='This track is over 50 MB — too large to send on Telegram.',
             )
         except DownloadBlockedError:
             logger.warning("YouTube blocked error for query: '%s'", query)
-            await bot.edit_message_text(
-                **bot_message_kwargs,
+            await bot.send_message(
+                chat_id=chat_id,
+                reply_to_message_id=user_message_id,
                 text='YouTube is being difficult right now. Try again in a few minutes.',
             )
         except VideoUnavailableError:
             logger.warning("Video unavailable error for query: '%s'", query)
-            await bot.edit_message_text(
-                **bot_message_kwargs,
+            await bot.send_message(
+                chat_id=chat_id,
+                reply_to_message_id=user_message_id,
                 text="This track isn't available — it may be private or region-locked. Try another.",
             )
         except Exception as e:
