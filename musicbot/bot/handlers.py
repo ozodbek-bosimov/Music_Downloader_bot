@@ -118,6 +118,23 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
     is_link = 'http://' in query or 'https://' in query
 
     if is_link:
+        from musicbot.downloader.client import _is_youtube_link, _is_spotify_link, _youtube_search_query, _spotify_track
+        
+        if _is_youtube_link(query):
+            extracted = _youtube_search_query(query)
+            if extracted:
+                query = extracted
+                is_link = False
+        elif _is_spotify_link(query):
+            try:
+                extracted, _, _ = _spotify_track(query)
+                if extracted:
+                    query = extracted
+                    is_link = False
+            except Exception:
+                pass
+
+    if is_link:
         async with async_session() as session:
             session.add(
                 DownloadQueue(
