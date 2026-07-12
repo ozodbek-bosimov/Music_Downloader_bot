@@ -315,7 +315,7 @@ def _resolve_and_download(query: str) -> list[tuple[Song, Path | None]]:
         # extraction); fall back to the direct link if search finds nothing.
         search_query = _youtube_search_query(query)
         if search_query:
-            results = _download(f'ytsearch1:{search_query}', label=None, cover_url=None)
+            results = _download(f'scsearch1:{search_query}', label=None, cover_url=None)
             if results:
                 return results
         return _download(query, label=None, cover_url=None)
@@ -323,10 +323,10 @@ def _resolve_and_download(query: str) -> list[tuple[Song, Path | None]]:
     if _is_spotify_link(query):
         # Raises UnsupportedSpotifyLinkError for albums/playlists.
         search_query, label, cover_url = _spotify_track(query)
-        return _download(f'ytsearch1:{search_query}', label=label, cover_url=cover_url)
+        return _download(f'scsearch1:{search_query}', label=label, cover_url=cover_url)
 
     # Plain text: treat it as a search.
-    return _download(f'ytsearch1:{query}', label=None, cover_url=None)
+    return _download(f'scsearch1:{query}', label=None, cover_url=None)
 
 
 class Downloader:
