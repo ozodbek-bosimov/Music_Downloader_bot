@@ -65,12 +65,10 @@ async def check_subscription_handler(callback: CallbackQuery) -> None:
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import uuid
 
-# Store a dictionary with results, and optionally label/cover_url for premium link metadata
-SEARCH_CACHE: dict[str, dict] = {}
+SEARCH_CACHE: dict[str, list[dict]] = {}
 
 def get_search_keyboard(search_id: str, page: int) -> InlineKeyboardMarkup:
-    cache_item = SEARCH_CACHE.get(search_id, {})
-    results = cache_item.get('results', [])
+    results = SEARCH_CACHE.get(search_id, [])
     items_per_page = 5
     max_page = max(0, (len(results) - 1) // items_per_page)
     
@@ -118,8 +116,6 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
     bot_message: Message = await message.reply('🔍 Searching…')
 
     is_link = 'http://' in query or 'https://' in query
-    label = None
-    cover_url = None
 
     if is_link:
         from musicbot.downloader.client import _is_youtube_link, _is_spotify_link, _youtube_search_query, _spotify_track
@@ -127,13 +123,13 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
         if _is_youtube_link(query):
             extracted = _youtube_search_query(query)
             if extracted:
-                query, label, cover_url = extracted
+                query = extracted[0]
                 is_link = False
         elif _is_spotify_link(query):
             try:
                 extracted = _spotify_track(query)
                 if extracted:
-                    query, label, cover_url = extracted
+                    query = extracted[0]
                     is_link = False
             except Exception:
                 pass
@@ -160,11 +156,7 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
         return
 
     search_id = uuid.uuid4().hex[:8]
-    SEARCH_CACHE[search_id] = {
-        'results': results,
-        'label': label,
-        'cover_url': cover_url
-    }
+    SEARCH_CACHE[search_id] = results
     
     if len(SEARCH_CACHE) > 500:
         oldest_key = next(iter(SEARCH_CACHE))
@@ -196,29 +188,8 @@ async def ignore_callback_handler(callback: CallbackQuery) -> None:
 async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
     parts = callback.data.split(':')
     track_id = parts[1]
-    
     url = f"https://api.soundcloud.com/tracks/{track_id}"
     
-    # Extract search_id if it's stored in the markup? 
-    # Wait, the search_id is in the pagination buttons, not in the dl_sc button currently!
-    # Let's see if we can find the search_id from the reply markup.
-    search_id = None
-    if callback.message and callback.message.reply_markup:
-        for row in callback.message.reply_markup.inline_keyboard:
-            for btn in row:
-                if btn.callback_data and btn.callback_data.startswith('page:'):
-                    search_id = btn.callback_data.split(':')[1]
-                    break
-            if search_id:
-                break
-                
-    if search_id and search_id in SEARCH_CACHE:
-        cache_item = SEARCH_CACHE[search_id]
-        label = cache_item.get('label')
-        cover_url = cache_item.get('cover_url')
-        if label:
-            url = f"scsearch_meta:{track_id}|{cover_url or 'None'}|{label.artist}|{label.name}"
-            
     await callback.answer()
     
     if isinstance(callback.message, Message):
