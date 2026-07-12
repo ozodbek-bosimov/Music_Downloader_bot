@@ -3,9 +3,17 @@ from __future__ import annotations
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Chat, Message, User
+from aiogram.types import (
+    CallbackQuery,
+    Chat,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    User,
+)
+
+from sqlalchemy import select
 
 from musicbot.config import BOT_TOKEN, REQUIRED_CHANNEL
 from musicbot.db import async_session
@@ -20,6 +28,8 @@ from .middlewares import (
 from .session import ResilientSession
 
 from contextlib import suppress
+from typing import Any
+import uuid
 
 bot = Bot(
     token=BOT_TOKEN,
@@ -42,6 +52,12 @@ USAGE_TEXT = (
 )
 if REQUIRED_CHANNEL:
     USAGE_TEXT += f'\n\nJoin {REQUIRED_CHANNEL} to use the bot.'
+
+# Maps a short search id to its list of SoundCloud result dicts, so paginating
+# and tapping a track later can look the results up without re-searching.
+SEARCH_CACHE: dict[str, list[dict[str, Any]]] = {}
+
+ITEMS_PER_PAGE = 5
 
 
 @dispatcher.message(CommandStart())
@@ -66,47 +82,79 @@ async def check_subscription_handler(callback: CallbackQuery) -> None:
     await callback.answer()
     if isinstance(callback.message, Message):
         await callback.message.delete()
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-import uuid
 
-SEARCH_CACHE: dict[str, list[dict]] = {}
+
+def _format_duration(seconds: int) -> str:
+    """Format a track length as ``M:SS`` (or ``H:MM:SS`` past an hour).
+
+    Missing or zero durations render as ``--:--``.
+    """
+    if not seconds or seconds <= 0:
+        return '--:--'
+
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f'{hours}:{minutes:02d}:{secs:02d}'
+    return f'{minutes}:{secs:02d}'
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Trim ``text`` to ``limit`` chars, appending a real ellipsis if cut."""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + '…'
+
+
+def _max_page(search_id: str) -> int:
+    results = SEARCH_CACHE.get(search_id, [])
+    return max(0, (len(results) - 1) // ITEMS_PER_PAGE)
+
+
+def _results_header(search_id: str, page: int) -> str:
+    return f'🎧 Choose a track (page {page + 1}/{_max_page(search_id) + 1}):'
+
 
 def get_search_keyboard(search_id: str, page: int) -> InlineKeyboardMarkup:
     results = SEARCH_CACHE.get(search_id, [])
-    items_per_page = 5
-    max_page = max(0, (len(results) - 1) // items_per_page)
-    
-    start_idx = page * items_per_page
-    end_idx = start_idx + items_per_page
-    page_items = results[start_idx:end_idx]
-    
-    buttons = []
+    max_page = _max_page(search_id)
+
+    start_idx = page * ITEMS_PER_PAGE
+    page_items = results[start_idx : start_idx + ITEMS_PER_PAGE]
+
+    buttons: list[list[InlineKeyboardButton]] = []
     for item in page_items:
         track_id = item['id']
-        title = item['title'][:30] + "..." if len(item['title']) > 30 else item['title']
-        artist = item['artist'][:20] + "..." if len(item['artist']) > 20 else item['artist']
-        duration = int(item.get('duration') or 0)
-        
-        mins, secs = divmod(duration, 60)
-        dur_str = f"{mins}:{secs:02d}"
-        
-        btn_text = f"{title} - {artist} ({dur_str})"
-        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_sc:{track_id}")])
-        
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"page:{search_id}:{page-1}"))
-    else:
-        nav_buttons.append(InlineKeyboardButton(text=" ", callback_data="ignore"))
-        
-    nav_buttons.append(InlineKeyboardButton(text=f"{page+1}/{max_page+1}", callback_data="ignore"))
-    
-    if page < max_page:
-        nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"page:{search_id}:{page+1}"))
-    else:
-        nav_buttons.append(InlineKeyboardButton(text=" ", callback_data="ignore"))
-        
-    buttons.append(nav_buttons)
+        title = _truncate(str(item.get('title') or 'Unknown'), 30)
+        artist = _truncate(str(item.get('artist') or 'Unknown'), 20)
+        dur = _format_duration(int(item.get('duration') or 0))
+        btn_text = f'🎵 {title} — {artist} · {dur}'
+        buttons.append(
+            [InlineKeyboardButton(text=btn_text, callback_data=f'dl_sc:{track_id}')]
+        )
+
+    # Only show navigation when there's more than one page.
+    if max_page > 0:
+        nav_buttons: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    text='◀️', callback_data=f'page:{search_id}:{page - 1}'
+                )
+            )
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text=f'{page + 1}/{max_page + 1}', callback_data='ignore'
+            )
+        )
+        if page < max_page:
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    text='▶️', callback_data=f'page:{search_id}:{page + 1}'
+                )
+            )
+        buttons.append(nav_buttons)
+
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -117,26 +165,29 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
     if not query:
         return None
 
-    bot_message: Message = await message.reply('🔍 Searching…')
+    bot_message: Message = await message.reply('🔎 Searching…')
 
     is_link = 'http://' in query or 'https://' in query
 
     if is_link:
-        from musicbot.downloader.client import _is_youtube_link, _is_spotify_link, _youtube_search_query, _spotify_track
-        
+        from musicbot.downloader.client import (
+            _is_spotify_link,
+            _is_youtube_link,
+            _spotify_track,
+            _youtube_search_query,
+        )
+
         if _is_youtube_link(query):
-            extracted = _youtube_search_query(query)
-            if extracted:
-                query = extracted
+            yt_query = _youtube_search_query(query)
+            if yt_query:
+                query = yt_query
                 is_link = False
         elif _is_spotify_link(query):
-            try:
-                extracted = _spotify_track(query)
-                if extracted:
-                    query = extracted[0]
+            with suppress(Exception):
+                track = _spotify_track(query)
+                if track:
+                    query = track[0]
                     is_link = False
-            except Exception:
-                pass
 
     if is_link:
         async with async_session() as session:
@@ -154,35 +205,45 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
     from musicbot.downloader import downloader
 
     results = await downloader.search_tracks(query, limit=20)
-    
+
     if not results:
-        await bot_message.edit_text('🔍 Nothing found. Check the spelling or try a link.')
+        await bot_message.edit_text(
+            '😕 Nothing found. Check the spelling or paste a link.'
+        )
         return
 
     search_id = uuid.uuid4().hex[:8]
     SEARCH_CACHE[search_id] = results
-    
+
     if len(SEARCH_CACHE) > 500:
         oldest_key = next(iter(SEARCH_CACHE))
         del SEARCH_CACHE[oldest_key]
-        
+
     markup = get_search_keyboard(search_id, 0)
-    await bot_message.edit_text('🎧 Choose a track to download:', reply_markup=markup)
+    await bot_message.edit_text(_results_header(search_id, 0), reply_markup=markup)
 
 
 @dispatcher.callback_query(F.data.startswith('page:'))
 async def page_callback_handler(callback: CallbackQuery) -> None:
+    if not callback.data:
+        return
+
     _, search_id, page_str = callback.data.split(':')
     page = int(page_str)
-    
+
     if search_id not in SEARCH_CACHE:
-        await callback.answer("Search expired. Please search again.", show_alert=True)
+        await callback.answer(
+            '⌛ This search expired. Please search again.', show_alert=True
+        )
         return
-        
+
     markup = get_search_keyboard(search_id, page)
     if isinstance(callback.message, Message):
-        await callback.message.edit_reply_markup(reply_markup=markup)
+        await callback.message.edit_text(
+            _results_header(search_id, page), reply_markup=markup
+        )
     await callback.answer()
+
 
 @dispatcher.callback_query(F.data == 'ignore')
 async def ignore_callback_handler(callback: CallbackQuery) -> None:
@@ -191,6 +252,9 @@ async def ignore_callback_handler(callback: CallbackQuery) -> None:
 
 @dispatcher.callback_query(F.data.startswith('dl_sc:'))
 async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
+    if not callback.data:
+        return
+
     track_id = callback.data.split(':', 1)[1]
     url: str | None = None
 
@@ -204,24 +268,47 @@ async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
         break
 
     if url is None:
-        await callback.answer('Search expired. Please search again.', show_alert=True)
+        await callback.answer(
+            '⌛ This search expired. Please search again.', show_alert=True
+        )
         return
 
-    if isinstance(callback.message, Message):
-        user_msg_id = callback.message.message_id
-        if callback.message.reply_to_message:
-            user_msg_id = callback.message.reply_to_message.message_id
-
-        async with async_session() as session:
-            session.add(
-                DownloadQueue(
-                    chat_id=callback.message.chat.id,
-                    bot_message_id=callback.message.message_id,
-                    user_message_id=user_msg_id,
-                    query=url,
-                    callback_query_id=callback.id,
-                )
-            )
-            await session.commit()
-    else:
+    if not isinstance(callback.message, Message):
         await callback.answer()
+        return
+
+    user_msg_id = callback.message.message_id
+    if callback.message.reply_to_message:
+        user_msg_id = callback.message.reply_to_message.message_id
+
+    chat_id = callback.message.chat.id
+
+    async with async_session() as session:
+        # A matching pending row means the track is already queued or in
+        # progress (rows are deleted once processed), so don't enqueue twice.
+        existing = await session.scalar(
+            select(DownloadQueue).where(
+                DownloadQueue.chat_id == chat_id,
+                DownloadQueue.query == url,
+            )
+        )
+        if existing is not None:
+            await callback.answer('⏳ Already downloading this track…')
+            return
+
+        session.add(
+            DownloadQueue(
+                chat_id=chat_id,
+                bot_message_id=callback.message.message_id,
+                user_message_id=user_msg_id,
+                query=url,
+                # Marks this request as menu-originated so the worker keeps the
+                # menu in place instead of deleting its status message.
+                callback_query_id=callback.id,
+            )
+        )
+        await session.commit()
+
+    # Acknowledge immediately so the button's spinner stops right away instead
+    # of waiting (and possibly timing out) for the download to finish.
+    await callback.answer('⬇️ Added to the queue')

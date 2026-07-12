@@ -13,14 +13,14 @@ from musicbot.config import (
     YTDLP_COOKIEFILE,
     YTDLP_PLAYER_CLIENTS,
 )
-
 from musicbot.downloader.exceptions import (
     DownloadBlockedError,
+    DRMProtectedError,
     TrackTooLargeError,
     UnsupportedSpotifyLinkError,
     VideoUnavailableError,
-    DRMProtectedError,
 )
+
 from .models import Song
 
 from asyncio import Semaphore
@@ -508,7 +508,7 @@ def _search_tracks(query: str, limit: int = 5) -> list[dict[str, Any]]:
     """Quickly fetch top search results from SoundCloud without downloading."""
     options = _ydl_options()
     options['extract_flat'] = True
-    
+
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(f'scsearch{limit}:{query}', download=False)
@@ -527,7 +527,7 @@ def _search_tracks(query: str, limit: int = 5) -> list[dict[str, Any]]:
                     'url': item.get('webpage_url') or item.get('url'),
                     'views': item.get('view_count') or 0,
                 })
-            
+
             # Sort by views descending so the most popular tracks appear first
             results.sort(key=lambda x: x['views'], reverse=True)
             return results

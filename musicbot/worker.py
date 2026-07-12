@@ -13,10 +13,10 @@ from musicbot.db.models import DownloadQueue
 from musicbot.downloader import Song, downloader
 from musicbot.downloader.exceptions import (
     DownloadBlockedError,
+    DRMProtectedError,
     TrackTooLargeError,
     UnsupportedSpotifyLinkError,
     VideoUnavailableError,
-    DRMProtectedError,
 )
 
 from collections.abc import Sequence
@@ -30,6 +30,16 @@ import os
 import time
 
 logger = logging.getLogger(__name__)
+
+
+async def _notify(chat_id: int, user_message_id: int, text: str) -> None:
+    """Send a reply message to the user, ignoring transient Telegram errors."""
+    with suppress(TelegramAPIError):
+        await bot.send_message(
+            chat_id=chat_id,
+            reply_to_message_id=user_message_id,
+            text=text,
+        )
 
 
 async def cleanup_old_tracks() -> None:
@@ -89,14 +99,13 @@ async def _serve_from_cache(
 
     try:
         await send_cached_audio(chat_id, user_message_id, file_id)
-        if callback_query_id:
-            with suppress(TelegramAPIError):
-                await bot.answer_callback_query(callback_query_id)
     except TelegramAPIError:
         # The cached file_id is no longer usable — re-download instead.
         return False
 
-    if not callback_query_id:
+    # Menu-originated requests (callback_query_id set) keep the menu in place so
+    # the user can pick more tracks. Direct requests get their status cleaned up.
+    if callback_query_id is None:
         with suppress(TelegramAPIError):
             await bot.delete_message(**bot_message_kwargs)
     return True
@@ -112,167 +121,91 @@ async def _download_and_serve(
     logger.info(
         "Starting download and serve for query: '%s' in chat: %d", query, chat_id
     )
-    with suppress(TelegramAPIError):
-        try:
-            songs: list[tuple[Song, Path | None]] = await downloader.download(query)
+    try:
+        songs: list[tuple[Song, Path | None]] = await downloader.download(query)
+    except DRMProtectedError:
+        logger.warning("DRM protected error for query: '%s'", query)
+        await _notify(
+            chat_id,
+            user_message_id,
+            '🔒 This track is DRM protected and can\u2019t be downloaded. '
+            'Try another version.',
+        )
+        return
+    except UnsupportedSpotifyLinkError:
+        logger.warning("Unsupported Spotify link: '%s'", query)
+        await _notify(
+            chat_id,
+            user_message_id,
+            "😕 Albums and playlists aren't supported — send a single track.",
+        )
+        return
+    except TrackTooLargeError:
+        logger.warning("Track too large error for query: '%s'", query)
+        await _notify(
+            chat_id,
+            user_message_id,
+            '📦 This track is over 50 MB — too large to send on Telegram.',
+        )
+        return
+    except DownloadBlockedError:
+        logger.warning("Download blocked error for query: '%s'", query)
+        await _notify(
+            chat_id,
+            user_message_id,
+            '⏳ Downloads are temporarily blocked. Please try again in a few minutes.',
+        )
+        return
+    except VideoUnavailableError:
+        logger.warning("Track unavailable error for query: '%s'", query)
+        await _notify(
+            chat_id,
+            user_message_id,
+            "🚫 This track isn't available — it may be private or region-locked.",
+        )
+        return
+    except Exception as e:
+        logger.exception("Unexpected exception downloading query '%s': %s", query, e)
+        await _notify(
+            chat_id,
+            user_message_id,
+            '😕 Something went wrong. Please try again.',
+        )
+        return
 
-            if songs:
-                logger.info(
-                    "Found %d tracks to send for query: '%s'", len(songs), query
-                )
-                file_ids = await asyncio.gather(
-                    *[
-                        reply_song(
-                            chat_id=chat_id,
-                            user_message_id=user_message_id,
-                            song=song,
-                            song_path=path,
-                        )
-                        for song, path in songs
-                    ]
-                )
-                if callback_query_id:
-                    with suppress(TelegramAPIError):
-                        await bot.answer_callback_query(callback_query_id)
-                else:
-                    with suppress(TelegramAPIError):
-                        await bot.delete_message(**bot_message_kwargs)
+    if not songs:
+        logger.warning("No songs returned for query: '%s'", query)
+        await _notify(
+            chat_id,
+            user_message_id,
+            '😕 Nothing found. Check the spelling or paste a link.',
+        )
+        return
 
-                # Cache single-track results so repeats skip YouTube entirely.
-                sent_file_ids = [file_id for file_id in file_ids if file_id]
-                if len(songs) == 1 and sent_file_ids:
-                    logger.info("Caching file_id for single track: '%s'", query)
-                    await store_file_id(query, sent_file_ids[0])
-            else:
-                logger.warning("No songs returned for query: '%s'", query)
-                alert_shown = False
-                if callback_query_id:
-                    try:
-                        await bot.answer_callback_query(
-                            callback_query_id,
-                            text='🔍 Nothing found. Check the spelling or try another.',
-                            show_alert=True,
-                        )
-                        alert_shown = True
-                    except TelegramAPIError:
-                        pass
-                if not alert_shown:
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        reply_to_message_id=user_message_id,
-                        text='🔍 Nothing found. Check the spelling or try a link.',
-                    )
-        except DRMProtectedError:
-            logger.warning("DRM protected error for query: '%s'", query)
-            alert_shown = False
-            if callback_query_id:
-                try:
-                    await bot.answer_callback_query(
-                        callback_query_id,
-                        text='🔒 This track is DRM protected and cannot be downloaded. Please search again and choose a different version.',
-                        show_alert=True,
-                    )
-                    alert_shown = True
-                except TelegramAPIError:
-                    pass
-            if not alert_shown:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    reply_to_message_id=user_message_id,
-                    text='🔒 This track is DRM protected and cannot be downloaded. Please search again and choose a different version.',
-                )
-        except UnsupportedSpotifyLinkError:
-            logger.warning("Unsupported Spotify link: '%s'", query)
-            alert_shown = False
-            if callback_query_id:
-                try:
-                    await bot.answer_callback_query(
-                        callback_query_id,
-                        text="Albums and playlists aren't supported — send a single track.",
-                        show_alert=True,
-                    )
-                    alert_shown = True
-                except TelegramAPIError:
-                    pass
-            if not alert_shown:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    reply_to_message_id=user_message_id,
-                    text="Albums and playlists aren't supported — send a single track.",
-                )
-        except TrackTooLargeError:
-            logger.warning("Track too large error for query: '%s'", query)
-            alert_shown = False
-            if callback_query_id:
-                try:
-                    await bot.answer_callback_query(
-                        callback_query_id,
-                        text='This track is over 50 MB — too large for Telegram. Please choose another.',
-                        show_alert=True,
-                    )
-                    alert_shown = True
-                except TelegramAPIError:
-                    pass
-            if not alert_shown:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    reply_to_message_id=user_message_id,
-                    text='This track is over 50 MB — too large to send on Telegram.',
-                )
-        except DownloadBlockedError:
-            logger.warning("Download blocked error for query: '%s'", query)
-            alert_shown = False
-            if callback_query_id:
-                try:
-                    await bot.answer_callback_query(
-                        callback_query_id,
-                        text='Download temporarily blocked. Try again in a few minutes.',
-                        show_alert=True,
-                    )
-                    alert_shown = True
-                except TelegramAPIError:
-                    pass
-            if not alert_shown:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    reply_to_message_id=user_message_id,
-                    text='Download temporarily blocked. Try again in a few minutes.',
-                )
-        except VideoUnavailableError:
-            logger.warning("Track unavailable error for query: '%s'", query)
-            alert_shown = False
-            if callback_query_id:
-                try:
-                    await bot.answer_callback_query(
-                        callback_query_id,
-                        text="This track isn't available — it may be private or region-locked. Try another.",
-                        show_alert=True,
-                    )
-                    alert_shown = True
-                except TelegramAPIError:
-                    pass
-            if not alert_shown:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    reply_to_message_id=user_message_id,
-                    text="This track isn't available — it may be private or region-locked. Try another.",
-                )
-        except Exception as e:
-            logger.exception(
-                "Unexpected exception downloading query '%s': %s", query, e
+    logger.info("Found %d tracks to send for query: '%s'", len(songs), query)
+    file_ids = await asyncio.gather(
+        *[
+            reply_song(
+                chat_id=chat_id,
+                user_message_id=user_message_id,
+                song=song,
+                song_path=path,
             )
-            if callback_query_id:
-                with suppress(TelegramAPIError):
-                    await bot.answer_callback_query(
-                        callback_query_id,
-                        text='Something went wrong. Please try again.',
-                        show_alert=True,
-                    )
-            else:
-                await bot.edit_message_text(
-                    **bot_message_kwargs,
-                    text='Something went wrong. Please try again.',
-                )
+            for song, path in songs
+        ]
+    )
+
+    # Menu-originated requests (callback_query_id set) keep the menu in place so
+    # the user can pick more tracks. Direct requests get their status cleaned up.
+    if callback_query_id is None:
+        with suppress(TelegramAPIError):
+            await bot.delete_message(**bot_message_kwargs)
+
+    # Cache single-track results so repeats skip YouTube entirely.
+    sent_file_ids = [file_id for file_id in file_ids if file_id]
+    if len(songs) == 1 and sent_file_ids:
+        logger.info("Caching file_id for single track: '%s'", query)
+        await store_file_id(query, sent_file_ids[0])
 
 
 async def process_download_request(request_id: int) -> None:
