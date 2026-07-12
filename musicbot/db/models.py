@@ -28,6 +28,7 @@ class DownloadQueue(Base):
     bot_message_id: Mapped[int] = mapped_column(BIGINT())
     user_message_id: Mapped[int] = mapped_column(BIGINT())
     query: Mapped[str] = mapped_column()
+    callback_query_id: Mapped[str | None] = mapped_column(nullable=True)
     queued_date: Mapped[datetime] = mapped_column(
         TIMESTAMP(), server_default=text('NOW()')
     )

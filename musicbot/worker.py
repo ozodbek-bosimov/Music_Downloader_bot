@@ -80,6 +80,7 @@ async def _serve_from_cache(
     chat_id: int,
     user_message_id: int,
     bot_message_kwargs: dict[str, Any],
+    callback_query_id: str | None = None,
 ) -> bool:
     """Send the track from cache if we have it. Returns True on success."""
     file_id = await get_cached_file_id(query)
@@ -88,6 +89,9 @@ async def _serve_from_cache(
 
     try:
         await send_cached_audio(chat_id, user_message_id, file_id)
+        if callback_query_id:
+            with suppress(TelegramAPIError):
+                await bot.answer_callback_query(callback_query_id)
     except TelegramAPIError:
         # The cached file_id is no longer usable — re-download instead.
         return False
@@ -102,6 +106,7 @@ async def _download_and_serve(
     chat_id: int,
     user_message_id: int,
     bot_message_kwargs: dict[str, Any],
+    callback_query_id: str | None = None,
 ) -> None:
     logger.info(
         "Starting download and serve for query: '%s' in chat: %d", query, chat_id
@@ -125,6 +130,9 @@ async def _download_and_serve(
                         for song, path in songs
                     ]
                 )
+                if callback_query_id:
+                    with suppress(TelegramAPIError):
+                        await bot.answer_callback_query(callback_query_id)
 
                 # Cache single-track results so repeats skip YouTube entirely.
                 sent_file_ids = [file_id for file_id in file_ids if file_id]
@@ -133,50 +141,129 @@ async def _download_and_serve(
                     await store_file_id(query, sent_file_ids[0])
             else:
                 logger.warning("No songs returned for query: '%s'", query)
+                alert_shown = False
+                if callback_query_id:
+                    try:
+                        await bot.answer_callback_query(
+                            callback_query_id,
+                            text='🔍 Hech narsa topilmadi. Boshqa variantni ko\'ring.',
+                            show_alert=True,
+                        )
+                        alert_shown = True
+                    except TelegramAPIError:
+                        pass
+                if not alert_shown:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        reply_to_message_id=user_message_id,
+                        text='🔍 Nothing found. Check the spelling or try a link.',
+                    )
+        except DRMProtectedError:
+            logger.warning("DRM protected error for query: '%s'", query)
+            alert_shown = False
+            if callback_query_id:
+                try:
+                    await bot.answer_callback_query(
+                        callback_query_id,
+                        text='🔒 Bu musiqa DRM (mualliflik huquqi) bilan himoyalangan va yuklanmaydi. Iltimos, ro\'yxatdan boshqa variantni tanlang.',
+                        show_alert=True,
+                    )
+                    alert_shown = True
+                except TelegramAPIError:
+                    pass
+            if not alert_shown:
                 await bot.send_message(
                     chat_id=chat_id,
                     reply_to_message_id=user_message_id,
-                    text='🔍 Nothing found. Check the spelling or try a link.',
+                    text='🔒 This track is DRM protected and cannot be downloaded. Please search again and choose a different version.',
                 )
-        except DRMProtectedError:
-            logger.warning("DRM protected error for query: '%s'", query)
-            await bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=user_message_id,
-                text='🔒 This track is DRM protected and cannot be downloaded. Please search again and choose a different version.',
-            )
         except UnsupportedSpotifyLinkError:
             logger.warning("Unsupported Spotify link: '%s'", query)
-            await bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=user_message_id,
-                text="Albums and playlists aren't supported — send a single track.",
-            )
+            alert_shown = False
+            if callback_query_id:
+                try:
+                    await bot.answer_callback_query(
+                        callback_query_id,
+                        text="⚠️ Albom va pleyerlar qo'llab-quvvatlanmaydi — faqat bitta qo'shiq yuboring.",
+                        show_alert=True,
+                    )
+                    alert_shown = True
+                except TelegramAPIError:
+                    pass
+            if not alert_shown:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=user_message_id,
+                    text="Albums and playlists aren't supported — send a single track.",
+                )
         except TrackTooLargeError:
             logger.warning("Track too large error for query: '%s'", query)
-            await bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=user_message_id,
-                text='This track is over 50 MB — too large to send on Telegram.',
-            )
+            alert_shown = False
+            if callback_query_id:
+                try:
+                    await bot.answer_callback_query(
+                        callback_query_id,
+                        text='⚠️ Ushbu musiqa 50 MB dan katta (Telegram cheklovi). Boshqasini tanlang.',
+                        show_alert=True,
+                    )
+                    alert_shown = True
+                except TelegramAPIError:
+                    pass
+            if not alert_shown:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=user_message_id,
+                    text='This track is over 50 MB — too large to send on Telegram.',
+                )
         except DownloadBlockedError:
             logger.warning("YouTube blocked error for query: '%s'", query)
-            await bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=user_message_id,
-                text='YouTube is being difficult right now. Try again in a few minutes.',
-            )
+            alert_shown = False
+            if callback_query_id:
+                try:
+                    await bot.answer_callback_query(
+                        callback_query_id,
+                        text='⚠️ Yuklash vaqtinchalik bloklandi. Bir necha daqiqadan so\'ng urinib ko\'ring.',
+                        show_alert=True,
+                    )
+                    alert_shown = True
+                except TelegramAPIError:
+                    pass
+            if not alert_shown:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=user_message_id,
+                    text='YouTube is being difficult right now. Try again in a few minutes.',
+                )
         except VideoUnavailableError:
             logger.warning("Video unavailable error for query: '%s'", query)
-            await bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=user_message_id,
-                text="This track isn't available — it may be private or region-locked. Try another.",
-            )
+            alert_shown = False
+            if callback_query_id:
+                try:
+                    await bot.answer_callback_query(
+                        callback_query_id,
+                        text="⚠️ Ushbu musiqa mavjud emas yoki xususiy (private). Boshqa variantni tanlang.",
+                        show_alert=True,
+                    )
+                    alert_shown = True
+                except TelegramAPIError:
+                    pass
+            if not alert_shown:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=user_message_id,
+                    text="This track isn't available — it may be private or region-locked. Try another.",
+                )
         except Exception as e:
             logger.exception(
                 "Unexpected exception downloading query '%s': %s", query, e
             )
+            if callback_query_id:
+                with suppress(TelegramAPIError):
+                    await bot.answer_callback_query(
+                        callback_query_id,
+                        text='❌ Xatolik yuz berdi. Qayta urinib ko\'ring.',
+                        show_alert=True,
+                    )
             await bot.edit_message_text(
                 **bot_message_kwargs,
                 text='Something went wrong. Please try again.',
@@ -195,6 +282,7 @@ async def process_download_request(request_id: int) -> None:
     chat_id: int = request.chat_id
     user_message_id: int = request.user_message_id
     query: str = request.query
+    callback_query_id: str | None = request.callback_query_id
 
     logger.info(
         "Processing queue request_id: %d, query: '%s' for chat_id: %d",
@@ -210,14 +298,14 @@ async def process_download_request(request_id: int) -> None:
 
     try:
         served = await _serve_from_cache(
-            query, chat_id, user_message_id, bot_message_kwargs
+            query, chat_id, user_message_id, bot_message_kwargs, callback_query_id
         )
         if served:
             logger.info('Request_id: %d served from cache', request_id)
         else:
             logger.info('Request_id: %d cache miss, downloading...', request_id)
             await _download_and_serve(
-                query, chat_id, user_message_id, bot_message_kwargs
+                query, chat_id, user_message_id, bot_message_kwargs, callback_query_id
             )
     finally:
         async with async_session() as session:

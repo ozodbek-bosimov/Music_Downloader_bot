@@ -198,8 +198,6 @@ async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
             continue
         break
     
-    await callback.answer('⏳ Queued for download...')
-    
     if isinstance(callback.message, Message):
         user_msg_id = callback.message.message_id
         if callback.message.reply_to_message:
@@ -212,6 +210,9 @@ async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
                     bot_message_id=callback.message.message_id,
                     user_message_id=user_msg_id,
                     query=url,
+                    callback_query_id=callback.id,
                 )
             )
             await session.commit()
+    else:
+        await callback.answer()
