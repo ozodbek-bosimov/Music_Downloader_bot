@@ -186,8 +186,7 @@ async def ignore_callback_handler(callback: CallbackQuery) -> None:
 
 @dispatcher.callback_query(F.data.startswith('dl_sc:'))
 async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
-    parts = callback.data.split(':')
-    track_id = parts[1]
+    track_id = callback.data.split(':', 1)[1]
     url = f"https://api.soundcloud.com/tracks/{track_id}"
     
     for results in SEARCH_CACHE.values():
