@@ -1,16 +1,19 @@
 # 🎧 Music Downloader Telegram Bot
 
-A Telegram bot that downloads music from YouTube. Send a song name, a YouTube
-link, or a Spotify track link — get the audio back with title, artist, and
-cover art.
+A Telegram bot that downloads music from SoundCloud. Send a song name, a
+YouTube link, or a Spotify track link — get the audio back with title, artist,
+and cover art.
 
 **Live:** [@OzodbeksMusicBot](https://t.me/OzodbeksMusicBot)
 
 ## Features
 
 - Search by name, YouTube links, and Spotify track links (no API key needed)
+- Interactive search results with pagination (5 per page, up to 20 results)
 - Instant repeats — cached `file_id` means the same song never re-downloads
-- Audio-only (`.m4a`), no transcoding — light on CPU and disk
+- Direct HTTP MP3 downloads — proper seeking/scrubbing in all players
+- Cover art and metadata extracted from SoundCloud
+- DRM-protected tracks detected and skipped gracefully
 - Pre-download size check — rejects oversized tracks before downloading
 - Ephemeral storage — files deleted immediately after sending
 - Admin tools: `/stats`, `/broadcast`
@@ -25,19 +28,19 @@ user message → queue (PostgreSQL) → worker picks it up
   → cache miss? → yt-dlp download → send audio → cache file_id → delete file
 ```
 
-YouTube links and Spotify tracks are routed through YouTube search (via oEmbed
-title), which avoids the aggressive blocking YouTube applies to direct
-extraction from datacenter IPs.
+YouTube links and Spotify tracks are resolved to song names (via oEmbed / Open
+Graph) and searched on SoundCloud, which avoids YouTube's aggressive IP blocking
+on datacenter servers.
 
 ## Quick start
 
 ```bash
 git clone https://github.com/ozodbek-bosimov/Music_Downloader_bot.git
 cd Music_Downloader_bot
-python3 -m venv env
-source install.sh   # installs deps, prompts for tokens, writes .env, runs migrations
-python main.py
+bash install.sh    # auto-detects OS, installs everything, prompts for config
 ```
+
+The installer supports **Ubuntu/Debian, CentOS/RHEL/Fedora, Arch, Alpine, and macOS**.
 
 > Only **one** instance at a time — Telegram allows a single poller per bot.
 
@@ -90,15 +93,14 @@ migrations/             Alembic (squashed)
 
 ## Deployment
 
-Any Linux host with Python 3.12 and PostgreSQL works. A ready-made `systemd`
-unit is included (`musicbot.service`).
+Any Linux host (or macOS) with Python 3.12 and PostgreSQL works.
+`bash install.sh` handles everything automatically.
 
 Step-by-step guide: [docs/deploy.md](docs/deploy.md)
 
 Key points:
-- Install [Deno](https://deno.land) — yt-dlp requires it
-- Set `YTDLP_COOKIEFILE` if YouTube starts blocking
-- Keep yt-dlp updated: `poetry update yt-dlp` (YouTube changes often)
+- Install [Deno](https://deno.land) — yt-dlp requires it (installer does this)
+- Keep yt-dlp updated: `poetry update yt-dlp` (SoundCloud changes sometimes)
 - Logs go to stdout/journald by default
 
 ## License

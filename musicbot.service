@@ -6,10 +6,16 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# Adjust User and paths to match your server setup.
-User=ubuntu
-WorkingDirectory=/home/ubuntu/Music_Downloader_bot
-ExecStart=/home/ubuntu/Music_Downloader_bot/env/bin/python /home/ubuntu/Music_Downloader_bot/main.py
+# ─── Adjust these to match your server ───
+# User=ubuntu
+# WorkingDirectory=/home/ubuntu/Music_Downloader_bot
+# ExecStart=/home/ubuntu/Music_Downloader_bot/env/bin/python /home/ubuntu/Music_Downloader_bot/main.py
+#
+# If you used install.sh, it generated the correct service file automatically.
+# This template is for manual setup only.
+User=CHANGE_ME
+WorkingDirectory=CHANGE_ME
+ExecStart=CHANGE_ME/env/bin/python CHANGE_ME/main.py
 Restart=always
 RestartSec=5
 
