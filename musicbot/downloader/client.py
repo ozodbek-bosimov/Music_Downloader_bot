@@ -143,7 +143,7 @@ def _is_youtube_link(query: str) -> bool:
     return 'youtube.com' in query or 'youtu.be' in query
 
 
-def _youtube_search_query(url: str) -> str | None:
+def _youtube_search_query(url: str) -> tuple[str, Song, str | None] | None:
     """Read a YouTube link's title + author via the public oEmbed endpoint.
 
     oEmbed isn't bot-checked, so we can then fetch the track through the SEARCH
@@ -160,7 +160,14 @@ def _youtube_search_query(url: str) -> str | None:
         return None
 
     author = data.get('author_name') or ''
-    return f'{title} {author}'.strip()
+    cover_url = data.get('thumbnail_url')
+    
+    # Clean up " - Topic" from author name
+    if author.endswith(' - Topic'):
+        author = author[:-8]
+        
+    search_query = f'{title} {author}'.strip()
+    return search_query, Song(name=title, artist=author), cover_url
 
 
 def _is_spotify_link(query: str) -> bool:
@@ -310,12 +317,24 @@ def _download(
 
 
 def _resolve_and_download(query: str) -> list[tuple[Song, Path | None]]:
+    if query.startswith('scsearch_meta:'):
+        # Format: scsearch_meta:track_id|cover_url|artist|title
+        data = query[14:].split('|', 3)
+        if len(data) == 4:
+            track_id = data[0]
+            cover_url = data[1] if data[1] != 'None' else None
+            artist = data[2]
+            title = data[3]
+            label = Song(name=title, artist=artist) if title else None
+            return _download(f"https://api.soundcloud.com/tracks/{track_id}", label=label, cover_url=cover_url)
+
     if _is_youtube_link(query):
         # Route links through search (which YouTube doesn't block like direct
         # extraction); fall back to the direct link if search finds nothing.
-        search_query = _youtube_search_query(query)
-        if search_query:
-            results = _download(f'scsearch1:{search_query}', label=None, cover_url=None)
+        extracted = _youtube_search_query(query)
+        if extracted:
+            search_query, label, cover_url = extracted
+            results = _download(f'scsearch1:{search_query}', label=label, cover_url=cover_url)
             if results:
                 return results
         return _download(query, label=None, cover_url=None)
