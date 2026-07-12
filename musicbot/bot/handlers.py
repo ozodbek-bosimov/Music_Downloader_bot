@@ -62,10 +62,49 @@ async def check_subscription_handler(callback: CallbackQuery) -> None:
     await callback.answer()
     if isinstance(callback.message, Message):
         await callback.message.delete()
-        await callback.message.answer('All set 🎧 Send me a song name or a link.')
-
-
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+import uuid
+
+SEARCH_CACHE: dict[str, list[dict]] = {}
+
+def get_search_keyboard(search_id: str, page: int) -> InlineKeyboardMarkup:
+    results = SEARCH_CACHE.get(search_id, [])
+    items_per_page = 5
+    max_page = max(0, (len(results) - 1) // items_per_page)
+    
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    page_items = results[start_idx:end_idx]
+    
+    buttons = []
+    for item in page_items:
+        track_id = item['id']
+        title = item['title'][:30] + "..." if len(item['title']) > 30 else item['title']
+        artist = item['artist'][:20] + "..." if len(item['artist']) > 20 else item['artist']
+        duration = int(item.get('duration') or 0)
+        
+        mins, secs = divmod(duration, 60)
+        dur_str = f"{mins}:{secs:02d}"
+        
+        btn_text = f"{title} - {artist} ({dur_str})"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_sc:{track_id}")])
+        
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"page:{search_id}:{page-1}"))
+    else:
+        nav_buttons.append(InlineKeyboardButton(text=" ", callback_data="ignore"))
+        
+    nav_buttons.append(InlineKeyboardButton(text=f"{page+1}/{max_page+1}", callback_data="ignore"))
+    
+    if page < max_page:
+        nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"page:{search_id}:{page+1}"))
+    else:
+        nav_buttons.append(InlineKeyboardButton(text=" ", callback_data="ignore"))
+        
+    buttons.append(nav_buttons)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 
 @dispatcher.message(F.text & ~F.text.startswith('/'))
 async def message_handler(message: Message, event_chat: Chat) -> None:
@@ -93,27 +132,39 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
 
     from musicbot.downloader import downloader
 
-    results = await downloader.search_tracks(query, limit=5)
+    results = await downloader.search_tracks(query, limit=20)
     
     if not results:
         await bot_message.edit_text('🔍 Nothing found. Check the spelling or try a link.')
         return
 
-    buttons = []
-    for item in results:
-        track_id = item['id']
-        title = item['title']
-        artist = item['artist']
-        duration = int(item.get('duration') or 0)
+    search_id = uuid.uuid4().hex[:8]
+    SEARCH_CACHE[search_id] = results
+    
+    if len(SEARCH_CACHE) > 500:
+        oldest_key = next(iter(SEARCH_CACHE))
+        del SEARCH_CACHE[oldest_key]
         
-        mins, secs = divmod(duration, 60)
-        dur_str = f"{mins}:{secs:02d}"
-        
-        btn_text = f"{title} - {artist} ({dur_str})"
-        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_sc:{track_id}")])
-        
-    markup = InlineKeyboardMarkup(inline_keyboard=buttons)
+    markup = get_search_keyboard(search_id, 0)
     await bot_message.edit_text('🎧 Choose a track to download:', reply_markup=markup)
+
+
+@dispatcher.callback_query(F.data.startswith('page:'))
+async def page_callback_handler(callback: CallbackQuery) -> None:
+    _, search_id, page_str = callback.data.split(':')
+    page = int(page_str)
+    
+    if search_id not in SEARCH_CACHE:
+        await callback.answer("Qidiruv eskirgan, iltimos boshqadan qidiring.", show_alert=True)
+        return
+        
+    markup = get_search_keyboard(search_id, page)
+    await callback.message.edit_reply_markup(reply_markup=markup)
+    await callback.answer()
+
+@dispatcher.callback_query(F.data == 'ignore')
+async def ignore_callback_handler(callback: CallbackQuery) -> None:
+    await callback.answer()
 
 
 @dispatcher.callback_query(F.data.startswith('dl_sc:'))
