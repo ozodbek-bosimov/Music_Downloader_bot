@@ -146,7 +146,7 @@ async def _download_and_serve(
                     try:
                         await bot.answer_callback_query(
                             callback_query_id,
-                            text='🔍 Hech narsa topilmadi. Boshqa variantni ko\'ring.',
+                            text='🔍 Nothing found. Check the spelling or try another.',
                             show_alert=True,
                         )
                         alert_shown = True
@@ -165,7 +165,7 @@ async def _download_and_serve(
                 try:
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text='🔒 Bu musiqa DRM (mualliflik huquqi) bilan himoyalangan va yuklanmaydi. Iltimos, ro\'yxatdan boshqa variantni tanlang.',
+                        text='🔒 This track is DRM protected and cannot be downloaded. Please search again and choose a different version.',
                         show_alert=True,
                     )
                     alert_shown = True
@@ -184,7 +184,7 @@ async def _download_and_serve(
                 try:
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text="⚠️ Albom va pleyerlar qo'llab-quvvatlanmaydi — faqat bitta qo'shiq yuboring.",
+                        text="⚠️ Albums and playlists aren't supported — send a single track.",
                         show_alert=True,
                     )
                     alert_shown = True
@@ -203,7 +203,7 @@ async def _download_and_serve(
                 try:
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text='⚠️ Ushbu musiqa 50 MB dan katta (Telegram cheklovi). Boshqasini tanlang.',
+                        text='⚠️ This track is over 50 MB — too large for Telegram. Please choose another.',
                         show_alert=True,
                     )
                     alert_shown = True
@@ -222,7 +222,7 @@ async def _download_and_serve(
                 try:
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text='⚠️ Yuklash vaqtinchalik bloklandi. Bir necha daqiqadan so\'ng urinib ko\'ring.',
+                        text='⚠️ Download temporarily blocked. Try again in a few minutes.',
                         show_alert=True,
                     )
                     alert_shown = True
@@ -241,7 +241,7 @@ async def _download_and_serve(
                 try:
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text="⚠️ Ushbu musiqa mavjud emas yoki xususiy (private). Boshqa variantni tanlang.",
+                        text="⚠️ This track isn't available — it may be private or region-locked. Try another.",
                         show_alert=True,
                     )
                     alert_shown = True
@@ -261,7 +261,7 @@ async def _download_and_serve(
                 with suppress(TelegramAPIError):
                     await bot.answer_callback_query(
                         callback_query_id,
-                        text='❌ Xatolik yuz berdi. Qayta urinib ko\'ring.',
+                        text='❌ Something went wrong. Please try again.',
                         show_alert=True,
                     )
             await bot.edit_message_text(
