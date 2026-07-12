@@ -104,7 +104,7 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
         track_id = item['id']
         title = item['title']
         artist = item['artist']
-        duration = item['duration']
+        duration = int(item.get('duration') or 0)
         
         mins, secs = divmod(duration, 60)
         dur_str = f"{mins}:{secs:02d}"
