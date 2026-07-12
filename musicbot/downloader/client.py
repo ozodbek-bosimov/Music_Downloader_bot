@@ -348,7 +348,7 @@ def _search_tracks(query: str, limit: int = 5) -> list[dict[str, Any]]:
                     'title': item.get('title', 'Unknown'),
                     'artist': item.get('uploader', 'Unknown'),
                     'duration': item.get('duration', 0),
-                    'url': item.get('url'),
+                    'url': item.get('webpage_url') or item.get('url'),
                     'views': item.get('view_count') or 0,
                 })
             
