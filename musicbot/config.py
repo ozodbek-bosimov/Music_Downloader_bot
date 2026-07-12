@@ -65,8 +65,20 @@ CACHE_MAX_ENTRIES: Final[int] = int(os.getenv('CACHE_MAX_ENTRIES', '5000'))
 # if FFmpeg is available and you really want MP3 output.
 CONVERT_TO_MP3: Final[bool] = os.getenv('CONVERT_TO_MP3', '0') == '1'
 
-# Optional path to an FFmpeg binary (only used when CONVERT_TO_MP3 is on).
+# Optional path to an FFmpeg binary (used for MP3 conversion and, when
+# REMUX_FOR_SEEK is on, for the faststart remux / duration probe steps).
 FFMPEG_LOCATION: Final[str | None] = os.getenv('FFMPEG_LOCATION') or None
+
+# After download, remux MP4-family files (.m4a/.mp4/...) with +faststart so
+# Telegram's player can seek, and correct the reported duration from the real
+# file via ffprobe. Best-effort: falls back to the original file/duration if
+# FFmpeg is missing or fails. Set to '0' to disable (e.g. no FFmpeg installed).
+REMUX_FOR_SEEK: Final[bool] = os.getenv('REMUX_FOR_SEEK', '1') == '1'
+
+# How far the extractor-reported duration may differ from the probed (real)
+# duration before we trust the probe instead. Guards against tiny rounding
+# differences triggering a needless correction.
+DURATION_TOLERANCE_SECONDS: Final[int] = int(os.getenv('DURATION_TOLERANCE_SECONDS', '2'))
 
 # Optional Netscape-format cookies file for YouTube. Helps when YouTube blocks
 # the server's datacenter IP ("Sign in to confirm you're not a bot").

@@ -4,9 +4,11 @@ import yt_dlp
 
 from musicbot.config import (
     CONVERT_TO_MP3,
+    DURATION_TOLERANCE_SECONDS,
     FFMPEG_LOCATION,
     MAX_AUDIO_FILESIZE,
     MAX_PARALLEL_DOWNLOADS,
+    REMUX_FOR_SEEK,
     TRACKS_PATH,
     YTDLP_COOKIEFILE,
     YTDLP_PLAYER_CLIENTS,
@@ -27,7 +29,9 @@ from pathlib import Path
 from typing import Any
 import asyncio
 import json
+import os
 import re
+import subprocess
 import urllib.parse
 import urllib.request
 
@@ -45,7 +49,7 @@ def _ydl_options() -> dict[str, Any]:
     options: dict[str, Any] = {
         # Prefer direct HTTP streams (proper seek support) over HLS (m3u8)
         # which lacks seek metadata and breaks fast-forward/rewind in players.
-        'format': 'bestaudio[protocol=http][ext=mp3]/bestaudio[protocol=http]/bestaudio[ext=m4a]/bestaudio/best',
+        'format': 'bestaudio[protocol=http][ext=mp3]/bestaudio[protocol=http]/bestaudio[ext=m4a]/bestaudio[protocol!*=m3u8]/bestaudio/best',
         'outtmpl': str(TRACKS_PATH / '%(title).200B.%(ext)s'),
         'restrictfilenames': True,
         'quiet': True,
@@ -76,6 +80,154 @@ def _ydl_options() -> dict[str, Any]:
         options['cookiefile'] = YTDLP_COOKIEFILE
 
     return options
+
+
+# MP4-family containers whose seekability depends on a leading 'moov' atom.
+# Only these are worth remuxing for faststart; everything else is left alone.
+_MP4_FAMILY_SUFFIXES = frozenset({'.m4a', '.mp4', '.mov', '.m4b'})
+
+# Cache whether ffmpeg is usable so a missing binary isn't retried per file.
+# None = not yet checked, True/False = last known result.
+_ffmpeg_available: bool | None = None
+
+
+def _ffmpeg_binary(name: str) -> str:
+    """Resolve an ffmpeg tool ('ffmpeg'/'ffprobe') honouring FFMPEG_LOCATION.
+
+    FFMPEG_LOCATION may be a directory holding the binaries or an explicit path
+    to a binary; when unset we fall back to the bare name (resolved via PATH).
+    """
+    if FFMPEG_LOCATION:
+        location = Path(FFMPEG_LOCATION)
+        if location.is_dir():
+            return str(location / name)
+        # An explicit binary path: use its directory for the sibling tool
+        # (e.g. FFMPEG_LOCATION points at .../ffmpeg, we want .../ffprobe too).
+        if location.name in ('ffmpeg', 'ffprobe'):
+            return str(location.parent / name)
+        return str(location)
+    return name
+
+
+def _remux_for_faststart(path: Path) -> Path:
+    """Rewrite an MP4-family file with its 'moov' atom first (+faststart).
+
+    Best-effort and lossless (`-c copy`, no re-encode). Non-MP4-family files
+    are returned immediately, untouched. Any failure (missing binary, non-zero
+    exit, timeout, empty output) returns the original path so today's behaviour
+    is preserved.
+    """
+    global _ffmpeg_available
+
+    if path.suffix.lower() not in _MP4_FAMILY_SUFFIXES:
+        return path
+
+    if _ffmpeg_available is False:
+        return path
+
+    tmp_path = path.with_name(f'{path.stem}.faststart{path.suffix}')
+    try:
+        result = subprocess.run(
+            [
+                _ffmpeg_binary('ffmpeg'),
+                '-y',
+                '-loglevel', 'error',
+                '-i', str(path),
+                '-c', 'copy',
+                '-map', '0:a',
+                '-movflags', '+faststart',
+                str(tmp_path),
+            ],
+            capture_output=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        # ffmpeg isn't installed/reachable; don't retry on the next file.
+        _ffmpeg_available = False
+        return path
+    except (subprocess.TimeoutExpired, OSError):
+        _cleanup_temp(tmp_path)
+        return path
+
+    _ffmpeg_available = True
+
+    if result.returncode != 0 or not tmp_path.exists() or tmp_path.stat().st_size == 0:
+        _cleanup_temp(tmp_path)
+        return path
+
+    try:
+        os.replace(tmp_path, path)
+    except OSError:
+        _cleanup_temp(tmp_path)
+        return path
+
+    return path
+
+
+def _cleanup_temp(tmp_path: Path) -> None:
+    try:
+        tmp_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _probe_duration(path: Path) -> int | None:
+    """Measure a file's real duration (seconds) via ffprobe.
+
+    Returns None on any failure (missing binary, non-zero exit, unparsable
+    output, timeout).
+    """
+    global _ffmpeg_available
+
+    if _ffmpeg_available is False:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                _ffmpeg_binary('ffprobe'),
+                '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        _ffmpeg_available = False
+        return None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    try:
+        return int(round(float(result.stdout.strip())))
+    except (TypeError, ValueError):
+        return None
+
+
+def _accurate_duration(extractor_duration: int, path: Path | None) -> int:
+    """Return the most trustworthy duration for a downloaded file.
+
+    Keeps the extractor's value unless a probe of the real file disagrees:
+    when the extractor value is missing/zero or off by more than
+    DURATION_TOLERANCE_SECONDS, the probed value wins.
+    """
+    if path is None or not REMUX_FOR_SEEK:
+        return extractor_duration
+
+    probed = _probe_duration(path)
+    if probed is None:
+        return extractor_duration
+
+    if extractor_duration <= 0 or abs(extractor_duration - probed) > DURATION_TOLERANCE_SECONDS:
+        return probed
+
+    return extractor_duration
 
 
 def _http_get(url: str) -> str:
@@ -211,9 +363,19 @@ def _download_cover(item: dict[str, Any], cover_url: str | None) -> Path | None:
 
 
 def _song_from_item(
-    item: dict[str, Any], label: Song | None, cover_url: str | None
+    item: dict[str, Any],
+    label: Song | None,
+    cover_url: str | None,
+    path: Path | None = None,
 ) -> Song:
-    duration = int(item.get('duration') or 0)
+    extractor_duration = int(item.get('duration') or 0)
+    # Cross-check the extractor's duration against the real file when remuxing
+    # is enabled; otherwise keep today's extractor-only value.
+    duration = (
+        _accurate_duration(extractor_duration, path)
+        if REMUX_FOR_SEEK
+        else extractor_duration
+    )
     thumbnail_path = _download_cover(item, cover_url)
 
     if label is not None:
@@ -309,10 +471,15 @@ def _download(
                 raise TrackTooLargeError
         return []
 
-    return [
-        (_song_from_item(item, label, cover_url), _downloaded_path(item))
-        for item in downloaded
-    ]
+    results: list[tuple[Song, Path | None]] = []
+    for item in downloaded:
+        path = _downloaded_path(item)
+        # Remux MP4-family files for faststart so Telegram can seek. No-op for
+        # non-MP4-family output (e.g. .mp3/.webm) and when the toggle is off.
+        if REMUX_FOR_SEEK and path is not None:
+            path = _remux_for_faststart(path)
+        results.append((_song_from_item(item, label, cover_url, path), path))
+    return results
 
 
 def _resolve_and_download(query: str) -> list[tuple[Song, Path | None]]:

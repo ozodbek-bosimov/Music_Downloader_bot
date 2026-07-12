@@ -96,8 +96,9 @@ async def _serve_from_cache(
         # The cached file_id is no longer usable — re-download instead.
         return False
 
-    with suppress(TelegramAPIError):
-        await bot.delete_message(**bot_message_kwargs)
+    if not callback_query_id:
+        with suppress(TelegramAPIError):
+            await bot.delete_message(**bot_message_kwargs)
     return True
 
 
@@ -133,6 +134,9 @@ async def _download_and_serve(
                 if callback_query_id:
                     with suppress(TelegramAPIError):
                         await bot.answer_callback_query(callback_query_id)
+                else:
+                    with suppress(TelegramAPIError):
+                        await bot.delete_message(**bot_message_kwargs)
 
                 # Cache single-track results so repeats skip YouTube entirely.
                 sent_file_ids = [file_id for file_id in file_ids if file_id]
@@ -216,7 +220,7 @@ async def _download_and_serve(
                     text='This track is over 50 MB — too large to send on Telegram.',
                 )
         except DownloadBlockedError:
-            logger.warning("YouTube blocked error for query: '%s'", query)
+            logger.warning("Download blocked error for query: '%s'", query)
             alert_shown = False
             if callback_query_id:
                 try:
@@ -232,10 +236,10 @@ async def _download_and_serve(
                 await bot.send_message(
                     chat_id=chat_id,
                     reply_to_message_id=user_message_id,
-                    text='YouTube is being difficult right now. Try again in a few minutes.',
+                    text='Download temporarily blocked. Try again in a few minutes.',
                 )
         except VideoUnavailableError:
-            logger.warning("Video unavailable error for query: '%s'", query)
+            logger.warning("Track unavailable error for query: '%s'", query)
             alert_shown = False
             if callback_query_id:
                 try:
@@ -264,10 +268,11 @@ async def _download_and_serve(
                         text='Something went wrong. Please try again.',
                         show_alert=True,
                     )
-            await bot.edit_message_text(
-                **bot_message_kwargs,
-                text='Something went wrong. Please try again.',
-            )
+            else:
+                await bot.edit_message_text(
+                    **bot_message_kwargs,
+                    text='Something went wrong. Please try again.',
+                )
 
 
 async def process_download_request(request_id: int) -> None:

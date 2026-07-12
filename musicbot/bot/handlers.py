@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Chat, Message, User
 
@@ -18,6 +19,8 @@ from .middlewares import (
 )
 from .session import ResilientSession
 
+from contextlib import suppress
+
 bot = Bot(
     token=BOT_TOKEN,
     session=ResilientSession(),
@@ -32,8 +35,9 @@ dispatcher.update.middleware(CreateUserMiddleware())
 dispatcher.update.middleware(MembershipCheckMiddleware())
 
 USAGE_TEXT = (
-    'Send me a <b>song name</b>, a <b>YouTube link</b>, or a '
-    "<b>Spotify track link</b> — I'll send back the audio.\n\n"
+    'Send me a <b>song name</b>, a <b>SoundCloud link</b>, a '
+    '<b>YouTube link</b>, or a <b>Spotify track link</b> — '
+    "I'll search and send back the audio.\n\n"
     "<i>Albums and playlists aren't supported.</i>"
 )
 if REQUIRED_CHANNEL:
@@ -123,7 +127,7 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
         if _is_youtube_link(query):
             extracted = _youtube_search_query(query)
             if extracted:
-                query = extracted[0]
+                query = extracted
                 is_link = False
         elif _is_spotify_link(query):
             try:
@@ -176,7 +180,8 @@ async def page_callback_handler(callback: CallbackQuery) -> None:
         return
         
     markup = get_search_keyboard(search_id, page)
-    await callback.message.edit_reply_markup(reply_markup=markup)
+    if isinstance(callback.message, Message):
+        await callback.message.edit_reply_markup(reply_markup=markup)
     await callback.answer()
 
 @dispatcher.callback_query(F.data == 'ignore')
@@ -187,8 +192,8 @@ async def ignore_callback_handler(callback: CallbackQuery) -> None:
 @dispatcher.callback_query(F.data.startswith('dl_sc:'))
 async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
     track_id = callback.data.split(':', 1)[1]
-    url = f"https://api.soundcloud.com/tracks/{track_id}"
-    
+    url: str | None = None
+
     for results in SEARCH_CACHE.values():
         for item in results:
             if str(item.get('id')) == track_id and item.get('url'):
@@ -197,7 +202,11 @@ async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
         else:
             continue
         break
-    
+
+    if url is None:
+        await callback.answer('Search expired. Please search again.', show_alert=True)
+        return
+
     if isinstance(callback.message, Message):
         user_msg_id = callback.message.message_id
         if callback.message.reply_to_message:
