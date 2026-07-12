@@ -43,7 +43,9 @@ def _ydl_options() -> dict[str, Any]:
     # Best available audio-only stream. Prefer m4a (no transcoding needed), but
     # fall back to any audio format — some videos don't offer m4a at all.
     options: dict[str, Any] = {
-        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        # Prefer direct HTTP streams (proper seek support) over HLS (m3u8)
+        # which lacks seek metadata and breaks fast-forward/rewind in players.
+        'format': 'bestaudio[protocol=http][ext=mp3]/bestaudio[protocol=http]/bestaudio[ext=m4a]/bestaudio/best',
         'outtmpl': str(TRACKS_PATH / '%(title).200B.%(ext)s'),
         'restrictfilenames': True,
         'quiet': True,
