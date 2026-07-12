@@ -16,6 +16,7 @@ from musicbot.downloader.exceptions import (
     TrackTooLargeError,
     UnsupportedSpotifyLinkError,
     VideoUnavailableError,
+    DRMProtectedError,
 )
 
 from collections.abc import Sequence
@@ -137,6 +138,12 @@ async def _download_and_serve(
                     **bot_message_kwargs,
                     text='🔍 Nothing found. Check the spelling or try a link.',
                 )
+        except DRMProtectedError:
+            logger.warning("DRM protected error for query: '%s'", query)
+            await bot.edit_message_text(
+                **bot_message_kwargs,
+                text='🔒 This track is DRM protected and cannot be downloaded. Please search again and choose a different version.',
+            )
         except UnsupportedSpotifyLinkError:
             logger.warning("Unsupported Spotify link: '%s'", query)
             await bot.edit_message_text(

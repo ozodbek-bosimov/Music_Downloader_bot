@@ -12,11 +12,12 @@ from musicbot.config import (
     YTDLP_PLAYER_CLIENTS,
 )
 
-from .exceptions import (
+from musicbot.downloader.exceptions import (
     DownloadBlockedError,
     TrackTooLargeError,
     UnsupportedSpotifyLinkError,
     VideoUnavailableError,
+    DRMProtectedError,
 )
 from .models import Song
 
@@ -234,6 +235,8 @@ def _raise_for_message(text: str) -> None:
     t = text.lower()
     if 'sign in to confirm' in t or 'not a bot' in t:
         raise DownloadBlockedError
+    if 'drm protected' in t:
+        raise DRMProtectedError
     if any(
         s in t
         for s in (

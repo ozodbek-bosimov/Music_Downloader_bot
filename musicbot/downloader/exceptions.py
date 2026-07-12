@@ -18,3 +18,6 @@ class TrackTooLargeError(DownloadError):
 
 class VideoUnavailableError(DownloadError):
     """The video is private, removed, region-locked or otherwise unavailable."""
+
+class DRMProtectedError(DownloadError):
+    """The track is DRM protected and cannot be downloaded."""
