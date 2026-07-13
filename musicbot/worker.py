@@ -33,13 +33,58 @@ logger = logging.getLogger(__name__)
 
 
 async def _notify(chat_id: int, user_message_id: int, text: str) -> None:
-    """Send a reply message to the user, ignoring transient Telegram errors."""
+    """Send a reply message to the user, ignoring transient Telegram errors.
+
+    This is the last-resort fallback for delivering feedback when a callback
+    alert or an in-place status edit isn't available.
+    """
     with suppress(TelegramAPIError):
         await bot.send_message(
             chat_id=chat_id,
             reply_to_message_id=user_message_id,
             text=text,
         )
+
+
+async def _ack(
+    callback_query_id: str | None, *, text: str | None = None, alert: bool = False
+) -> bool:
+    """Answer a callback query as a top toast/alert. Returns True if delivered."""
+    if not callback_query_id:
+        return False
+    try:
+        await bot.answer_callback_query(callback_query_id, text=text, show_alert=alert)
+        return True
+    except TelegramAPIError:
+        return False
+
+
+async def _deliver_error(
+    callback_query_id: str | None,
+    chat_id: int,
+    user_message_id: int,
+    bot_message_kwargs: dict[str, Any],
+    text: str,
+) -> None:
+    """Deliver an error to the user via the most fitting channel.
+
+    Menu-originated requests get a top alert; direct requests get their
+    "🔎 Searching…" status message edited in place. Either path falls back to a
+    reply message if the preferred delivery fails (e.g. an expired callback or
+    an uneditable message).
+    """
+    # Menu: show a top alert; if it expired, fall back to a reply.
+    if callback_query_id is not None:
+        if not await _ack(callback_query_id, text=text, alert=True):
+            await _notify(chat_id, user_message_id, text)
+        return
+
+    # Direct: turn the "Searching…" status message into the error in place;
+    # if editing fails, fall back to a reply.
+    try:
+        await bot.edit_message_text(**bot_message_kwargs, text=text)
+    except TelegramAPIError:
+        await _notify(chat_id, user_message_id, text)
 
 
 async def cleanup_old_tracks() -> None:
@@ -104,8 +149,11 @@ async def _serve_from_cache(
         return False
 
     # Menu-originated requests (callback_query_id set) keep the menu in place so
-    # the user can pick more tracks. Direct requests get their status cleaned up.
-    if callback_query_id is None:
+    # the user can pick more tracks — we just answer the callback silently to
+    # stop the button spinner. Direct requests get their status cleaned up.
+    if callback_query_id is not None:
+        await _ack(callback_query_id)
+    else:
         with suppress(TelegramAPIError):
             await bot.delete_message(**bot_message_kwargs)
     return True
@@ -125,59 +173,73 @@ async def _download_and_serve(
         songs: list[tuple[Song, Path | None]] = await downloader.download(query)
     except DRMProtectedError:
         logger.warning("DRM protected error for query: '%s'", query)
-        await _notify(
+        await _deliver_error(
+            callback_query_id,
             chat_id,
             user_message_id,
+            bot_message_kwargs,
             '🔒 This track is DRM protected and can\u2019t be downloaded. '
             'Try another version.',
         )
         return
     except UnsupportedSpotifyLinkError:
         logger.warning("Unsupported Spotify link: '%s'", query)
-        await _notify(
+        await _deliver_error(
+            callback_query_id,
             chat_id,
             user_message_id,
+            bot_message_kwargs,
             "😕 Albums and playlists aren't supported — send a single track.",
         )
         return
     except TrackTooLargeError:
         logger.warning("Track too large error for query: '%s'", query)
-        await _notify(
+        await _deliver_error(
+            callback_query_id,
             chat_id,
             user_message_id,
+            bot_message_kwargs,
             '📦 This track is over 50 MB — too large to send on Telegram.',
         )
         return
     except DownloadBlockedError:
         logger.warning("Download blocked error for query: '%s'", query)
-        await _notify(
+        await _deliver_error(
+            callback_query_id,
             chat_id,
             user_message_id,
+            bot_message_kwargs,
             '⏳ Downloads are temporarily blocked. Please try again in a few minutes.',
         )
         return
     except VideoUnavailableError:
         logger.warning("Track unavailable error for query: '%s'", query)
-        await _notify(
+        await _deliver_error(
+            callback_query_id,
             chat_id,
             user_message_id,
+            bot_message_kwargs,
             "🚫 This track isn't available — it may be private or region-locked.",
         )
         return
     except Exception as e:
         logger.exception("Unexpected exception downloading query '%s': %s", query, e)
-        await _notify(
+        await _deliver_error(
+            callback_query_id,
             chat_id,
             user_message_id,
+            bot_message_kwargs,
             '😕 Something went wrong. Please try again.',
         )
         return
 
     if not songs:
         logger.warning("No songs returned for query: '%s'", query)
-        await _notify(
+        await _deliver_error(
+            callback_query_id,
             chat_id,
             user_message_id,
+            bot_message_kwargs,
             '😕 Nothing found. Check the spelling or paste a link.',
         )
         return
@@ -196,8 +258,11 @@ async def _download_and_serve(
     )
 
     # Menu-originated requests (callback_query_id set) keep the menu in place so
-    # the user can pick more tracks. Direct requests get their status cleaned up.
-    if callback_query_id is None:
+    # the user can pick more tracks — we just answer the callback silently to
+    # stop the button spinner. Direct requests get their status cleaned up.
+    if callback_query_id is not None:
+        await _ack(callback_query_id)
+    else:
         with suppress(TelegramAPIError):
             await bot.delete_message(**bot_message_kwargs)
 

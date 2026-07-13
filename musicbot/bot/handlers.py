@@ -309,6 +309,6 @@ async def dl_sc_callback_handler(callback: CallbackQuery) -> None:
         )
         await session.commit()
 
-    # Acknowledge immediately so the button's spinner stops right away instead
-    # of waiting (and possibly timing out) for the download to finish.
-    await callback.answer('⬇️ Added to the queue')
+    # Leave the callback unanswered: the worker answers it at completion time
+    # (silently on success, or as a top alert on error). The button keeps its
+    # loading spinner until then, which signals the work is in progress.
