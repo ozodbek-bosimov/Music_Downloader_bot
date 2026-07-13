@@ -129,7 +129,7 @@ def get_search_keyboard(search_id: str, page: int) -> InlineKeyboardMarkup:
         title = _truncate(str(item.get('title') or 'Unknown'), 30)
         artist = _truncate(str(item.get('artist') or 'Unknown'), 20)
         dur = _format_duration(int(item.get('duration') or 0))
-        btn_text = f'🎵 {title} — {artist} · {dur}'
+        btn_text = f'{title} — {artist} · {dur}'
         buttons.append(
             [InlineKeyboardButton(text=btn_text, callback_data=f'dl_sc:{track_id}')]
         )
