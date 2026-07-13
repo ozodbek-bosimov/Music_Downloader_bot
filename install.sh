@@ -198,6 +198,39 @@ install_deno() {
     fi
 }
 
+# ── PO-token provider (cookieless YouTube) ────────────────────────────────────
+setup_pot_provider() {
+    step "PO-token provider (cookieless YouTube downloads)"
+
+    if ! command -v docker &>/dev/null; then
+        warn "Docker not found — YouTube may be blocked on this host without it."
+        info "For cookieless YouTube, install Docker then run: ${BOLD}docker compose up -d${NC}"
+        info "The bot still works via SoundCloud fallback in the meantime."
+        return
+    fi
+
+    read_input "Start the PO-token provider with Docker now? (y/n)" START_POT "y"
+    if [[ ! "$START_POT" =~ ^[Yy] ]]; then
+        info "Skipped. Start later with: ${BOLD}docker compose up -d${NC}"
+        return
+    fi
+
+    if docker compose version &>/dev/null; then
+        POT_CMD=(docker compose up -d)
+    elif command -v docker-compose &>/dev/null; then
+        POT_CMD=(docker-compose up -d)
+    else
+        POT_CMD=(docker run -d --restart unless-stopped --name bgutil-pot-provider
+                 -p 127.0.0.1:4416:4416 brainicism/bgutil-ytdlp-pot-provider:latest)
+    fi
+
+    if "${POT_CMD[@]}"; then
+        success "PO-token provider running on 127.0.0.1:4416"
+    else
+        warn "Couldn't start the provider. Start it later with: ${BOLD}docker compose up -d${NC}"
+    fi
+}
+
 # ── Helper: read user input ──────────────────────────────────────────────────
 read_input() {
     local prompt="$1"
@@ -326,10 +359,19 @@ CONVERT_TO_MP3=0
 FFMPEG_LOCATION=
 
 # --- YouTube ---
-# Netscape-format cookies file to bypass YouTube bot checks.
+# Netscape-format cookies file to bypass YouTube bot checks (usually not needed
+# when the PO-token provider is running).
 YTDLP_COOKIEFILE=
 # Comma-separated yt-dlp player clients (leave empty for defaults).
 YTDLP_PLAYER_CLIENTS=
+
+# --- Search & download source ---
+# How many search results to show in the pick-a-track menu.
+MUSIC_SEARCH_LIMIT=20
+# Try SoundCloud when a YouTube download fails (1=on, 0=off).
+SOUNDCLOUD_FALLBACK=1
+# bgutil PO-token provider URL (empty = local default http://127.0.0.1:4416).
+POT_PROVIDER_BASE_URL=
 
 # --- Logging ---
 # Set to 1 to write logs to rotating files under logs/.
@@ -412,6 +454,7 @@ main() {
     setup_python_env
     generate_env
     run_migrations
+    setup_pot_provider
     install_service
 
     echo ""
@@ -419,8 +462,9 @@ main() {
     echo -e "${GREEN}${BOLD}  ✔ Installation complete!${NC}"
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    echo -e "  Start the bot:    ${BOLD}sudo systemctl start musicbot${NC}"
-    echo -e "  Or run manually:  ${BOLD}env/bin/python main.py${NC}"
+    echo -e "  Start the bot:     ${BOLD}sudo systemctl start musicbot${NC}"
+    echo -e "  Or run manually:   ${BOLD}env/bin/python main.py${NC}"
+    echo -e "  PO-token provider: ${BOLD}docker compose up -d${NC}  (cookieless YouTube)"
     echo ""
 }
 

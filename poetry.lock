@@ -300,6 +300,18 @@ files = [
 ]
 
 [[package]]
+name = "bgutil-ytdlp-pot-provider"
+version = "1.3.1"
+description = ""
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "bgutil_ytdlp_pot_provider-1.3.1-py3-none-any.whl", hash = "sha256:e62b21f9b2e4479d59af87a8900387c34892e8d7fdb223f266749a90e0be22de"},
+    {file = "bgutil_ytdlp_pot_provider-1.3.1.tar.gz", hash = "sha256:130635912e2450757438f72068b900076ac1a62d9f26a00afbe6f2ab258e8b25"},
+]
+
+[[package]]
 name = "brotli"
 version = "1.2.0"
 description = "Python bindings for the Brotli compression library"
@@ -2268,7 +2280,22 @@ files = [
     {file = "yt_dlp_ejs-0.8.0.tar.gz", hash = "sha256:d5fa1639f63b5c4af8d932495f60689d5370f1a095782c944f7f62a303eb104e"},
 ]
 
+[[package]]
+name = "ytmusicapi"
+version = "1.12.1"
+description = "Unofficial API for YouTube Music"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "ytmusicapi-1.12.1-py3-none-any.whl", hash = "sha256:2a53f6df504b97b93a4d41c804b699b46190207cb9d864fcf4edeb338b1f15d9"},
+    {file = "ytmusicapi-1.12.1.tar.gz", hash = "sha256:4e33f424db311ece1b9e5f29a51ade46b0697f6e2f284f8a40bcbd7219772755"},
+]
+
+[package.dependencies]
+requests = ">=2.22"
+
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "6f860bf5a50339a92e80672b8dee933464308a0c726d1ff9e87ce7db5976cbb3"
+content-hash = "1b234d1ca4384a81e0c1b97afa1eb1df0cda09ea0bf74afbeba98556bd8f6614"

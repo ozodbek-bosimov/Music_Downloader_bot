@@ -17,7 +17,7 @@ That's it. The script handles:
 - System packages (Python 3.12+, PostgreSQL, FFmpeg, git, curl)
 - Deno (required by yt-dlp for YouTube JS extraction)
 - PostgreSQL database and user creation
-- Python virtual environment and dependencies
+- Python virtual environment and dependencies (incl. ytmusicapi + yt-dlp PO-token plugin)
 - Interactive `.env` configuration
 - Database migrations
 - systemd service installation (optional, Linux only)
@@ -112,7 +112,28 @@ nano .env                  # fill in your values
 alembic upgrade head
 ```
 
-### 5. systemd service (Linux)
+### 5. PO-token provider (recommended — cookieless YouTube)
+
+Datacenter IPs get YouTube's "Sign in to confirm you're not a bot" challenge.
+The bot answers it automatically using a small local **PO-token provider** — no
+cookies required. It runs as a Docker container:
+
+```bash
+# Requires Docker: https://docs.docker.com/engine/install/
+docker compose up -d          # starts brainicism/bgutil-ytdlp-pot-provider
+docker compose logs -f        # optional: watch it
+```
+
+The provider listens on `127.0.0.1:4416` (local only). The bot's yt-dlp plugin
+(`bgutil-ytdlp-pot-provider`, installed with the Python deps) finds it there
+automatically — no extra config. To run it on another host/port, set
+`POT_PROVIDER_BASE_URL` in `.env`.
+
+> Without the provider the bot still works — it falls back to SoundCloud
+> (`SOUNDCLOUD_FALLBACK=1`) — but YouTube, the more accurate and higher-quality
+> source, may be blocked.
+
+### 6. systemd service (Linux)
 
 ```bash
 # Edit musicbot.service — set User, WorkingDirectory, and ExecStart paths
@@ -141,14 +162,19 @@ source env/bin/activate
 poetry install
 poetry update yt-dlp
 alembic upgrade head
+docker compose pull && docker compose up -d   # refresh the PO-token provider
 sudo systemctl restart musicbot
 ```
 
 ## Notes
 
 - **No inbound ports** required — the bot only makes outbound requests.
-- **YouTube blocking:** datacenter IPs sometimes get "Sign in to confirm you're
-  not a bot". Set `YTDLP_COOKIEFILE` to a Netscape-format cookies file.
+- **YouTube blocking:** datacenter IPs get "Sign in to confirm you're not a
+  bot". The PO-token provider (step 5) fixes this **without cookies**. As an
+  alternative you can still set `YTDLP_COOKIEFILE` to a cookies file.
+- **Search & sources:** search uses YouTube Music (accurate song results); the
+  exact match downloads from YouTube, with SoundCloud as an automatic fallback
+  (`SOUNDCLOUD_FALLBACK`).
 - **Logs** go to journald by default (`journalctl -u musicbot`). Set
   `LOG_TO_FILE=1` for rotating file logs under `logs/`.
 - **FFmpeg** is installed by default for future use. Set `CONVERT_TO_MP3=1` to

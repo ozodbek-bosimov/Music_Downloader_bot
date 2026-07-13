@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -15,7 +16,7 @@ from aiogram.types import (
 
 from sqlalchemy import select
 
-from musicbot.config import BOT_TOKEN, REQUIRED_CHANNEL
+from musicbot.config import BOT_TOKEN, MUSIC_SEARCH_LIMIT, REQUIRED_CHANNEL
 from musicbot.db import async_session
 from musicbot.db.models import DownloadQueue
 
@@ -112,7 +113,7 @@ def _max_page(search_id: str) -> int:
 
 
 def _results_header(search_id: str, page: int) -> str:
-    return f'🎧 Choose a track (page {page + 1}/{_max_page(search_id) + 1}):'
+    return '🎧 Choose a track:'
 
 
 def get_search_keyboard(search_id: str, page: int) -> InlineKeyboardMarkup:
@@ -204,7 +205,7 @@ async def message_handler(message: Message, event_chat: Chat) -> None:
 
     from musicbot.downloader import downloader
 
-    results = await downloader.search_tracks(query, limit=20)
+    results = await downloader.search_tracks(query, limit=MUSIC_SEARCH_LIMIT)
 
     if not results:
         await bot_message.edit_text(
@@ -239,9 +240,10 @@ async def page_callback_handler(callback: CallbackQuery) -> None:
 
     markup = get_search_keyboard(search_id, page)
     if isinstance(callback.message, Message):
-        await callback.message.edit_text(
-            _results_header(search_id, page), reply_markup=markup
-        )
+        with suppress(TelegramAPIError):
+            await callback.message.edit_text(
+                _results_header(search_id, page), reply_markup=markup
+            )
     await callback.answer()
 
 

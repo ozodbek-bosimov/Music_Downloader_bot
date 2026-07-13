@@ -2,19 +2,23 @@ from __future__ import annotations
 
 import yt_dlp
 
+from musicbot import metrics
 from musicbot.config import (
     CONVERT_TO_MP3,
     DURATION_TOLERANCE_SECONDS,
     FFMPEG_LOCATION,
     MAX_AUDIO_FILESIZE,
     MAX_PARALLEL_DOWNLOADS,
+    POT_PROVIDER_BASE_URL,
     REMUX_FOR_SEEK,
+    SOUNDCLOUD_FALLBACK,
     TRACKS_PATH,
     YTDLP_COOKIEFILE,
     YTDLP_PLAYER_CLIENTS,
 )
 from musicbot.downloader.exceptions import (
     DownloadBlockedError,
+    DownloadError,
     DRMProtectedError,
     TrackTooLargeError,
     UnsupportedSpotifyLinkError,
@@ -24,16 +28,21 @@ from musicbot.downloader.exceptions import (
 from .models import Song
 
 from asyncio import Semaphore
+from contextlib import suppress
 from html import unescape
 from pathlib import Path
 from typing import Any
 import asyncio
 import json
+import logging
 import os
 import re
+import socket
 import subprocess
 import urllib.parse
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 _download_semaphore = Semaphore(MAX_PARALLEL_DOWNLOADS)
 
@@ -64,6 +73,12 @@ def _ydl_options() -> dict[str, Any]:
     if YTDLP_PLAYER_CLIENTS:
         options['extractor_args'] = {'youtube': {'player_client': YTDLP_PLAYER_CLIENTS}}
 
+    if POT_PROVIDER_BASE_URL:
+        # Point the bgutil PO-token plugin at a non-default provider URL. With
+        # the default local server, no config is needed (the plugin finds it).
+        extractor_args = options.setdefault('extractor_args', {})
+        extractor_args['youtubepot-bgutil'] = {'base_url': POT_PROVIDER_BASE_URL}
+
     if CONVERT_TO_MP3:
         options['postprocessors'] = [
             {
@@ -80,6 +95,27 @@ def _ydl_options() -> dict[str, Any]:
         options['cookiefile'] = YTDLP_COOKIEFILE
 
     return options
+
+
+# The bgutil plugin's default provider address when POT_PROVIDER_BASE_URL is unset.
+_DEFAULT_POT_BASE_URL = 'http://127.0.0.1:4416'
+
+
+def pot_provider_reachable() -> bool:
+    """Best-effort TCP check that the PO-token provider is accepting connections.
+
+    Used by /stats to reveal whether cookieless YouTube downloads can work; a
+    down provider means the bot is degrading to the SoundCloud fallback.
+    """
+    base = POT_PROVIDER_BASE_URL or _DEFAULT_POT_BASE_URL
+    parsed = urllib.parse.urlparse(base)
+    host = parsed.hostname or '127.0.0.1'
+    port = parsed.port or 4416
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
 
 
 # MP4-family containers whose seekability depends on a leading 'moov' atom.
@@ -482,30 +518,174 @@ def _download(
     return results
 
 
+def _warn_soundcloud_fallback(target: str) -> None:
+    logger.warning(
+        'YouTube download failed; falling back to SoundCloud — is the PO-token '
+        'provider running? (%s)',
+        target,
+    )
+
+
 def _resolve_and_download(query: str) -> list[tuple[Song, Path | None]]:
+    def deliver(
+        results: list[tuple[Song, Path | None]], source: str
+    ) -> list[tuple[Song, Path | None]]:
+        # Record the source that actually delivered so /stats can surface it
+        # when YouTube is failing and the bot silently degrades to SoundCloud.
+        metrics.record(source if results else metrics.NONE)
+        return results
+
     if _is_youtube_link(query):
-        # Route links through search (which YouTube doesn't block like direct
-        # extraction); fall back to the direct link if search finds nothing.
-        search_query = _youtube_search_query(query)
-        if search_query:
-            results = _download(f'scsearch1:{search_query}', label=None, cover_url=None)
+        # Exact video (menu picks and pasted YouTube links). The PO-token
+        # provider lets this work without cookies; if it still fails, fall back
+        # to an equivalent track on SoundCloud.
+        with suppress(DownloadError):
+            results = _download(query, label=None, cover_url=None)
             if results:
-                return results
-        return _download(query, label=None, cover_url=None)
+                return deliver(results, metrics.YOUTUBE)
+        if SOUNDCLOUD_FALLBACK:
+            _warn_soundcloud_fallback(query)
+            title = _youtube_search_query(query)
+            if title:
+                return deliver(
+                    _download(f'scsearch1:{title}', label=None, cover_url=None),
+                    metrics.SOUNDCLOUD,
+                )
+        return deliver([], metrics.NONE)
 
     if _is_spotify_link(query):
         # Raises UnsupportedSpotifyLinkError for albums/playlists.
         search_query, label, cover_url = _spotify_track(query)
-        return _download(f'scsearch1:{search_query}', label=label, cover_url=cover_url)
+        with suppress(DownloadError):
+            results = _download(
+                f'ytsearch1:{search_query}', label=label, cover_url=cover_url
+            )
+            if results:
+                return deliver(results, metrics.YOUTUBE)
+        if SOUNDCLOUD_FALLBACK:
+            _warn_soundcloud_fallback(search_query)
+            return deliver(
+                _download(f'scsearch1:{search_query}', label=label, cover_url=cover_url),
+                metrics.SOUNDCLOUD,
+            )
+        return deliver([], metrics.NONE)
 
     if query.startswith('http://') or query.startswith('https://'):
-        return _download(query, label=None, cover_url=None)
+        # A direct media link we didn't turn into a search (e.g. SoundCloud).
+        return deliver(_download(query, label=None, cover_url=None), metrics.SOUNDCLOUD)
 
-    return _download(f'scsearch1:{query}', label=None, cover_url=None)
+    # Plain text (rare here — the menu normally resolves names to a videoId).
+    with suppress(DownloadError):
+        results = _download(f'ytsearch1:{query}', label=None, cover_url=None)
+        if results:
+            return deliver(results, metrics.YOUTUBE)
+    if SOUNDCLOUD_FALLBACK:
+        _warn_soundcloud_fallback(query)
+        return deliver(
+            _download(f'scsearch1:{query}', label=None, cover_url=None),
+            metrics.SOUNDCLOUD,
+        )
+    return deliver([], metrics.NONE)
 
 
-def _search_tracks(query: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Quickly fetch top search results from SoundCloud without downloading."""
+_ytmusic: Any = None
+_ytmusic_init_failed = False
+
+
+def _get_ytmusic() -> Any:
+    """Return a lazily-created, unauthenticated YouTube Music client (or None).
+
+    Import and construction are deferred and guarded so the module still loads
+    (and the bot still runs on SoundCloud) if ytmusicapi isn't installed.
+    """
+    global _ytmusic, _ytmusic_init_failed
+    if _ytmusic is None and not _ytmusic_init_failed:
+        try:
+            from ytmusicapi import YTMusic
+
+            _ytmusic = YTMusic()  # no auth needed for search
+        except Exception:
+            _ytmusic_init_failed = True
+            logger.warning(
+                'ytmusicapi unavailable; falling back to SoundCloud for search'
+            )
+    return _ytmusic
+
+
+def _search_youtube_music(query: str, limit: int) -> list[dict[str, Any]]:
+    """Search YouTube Music for songs. Returns [] if unavailable or on error."""
+    yt = _get_ytmusic()
+    if yt is None:
+        return []
+
+    try:
+        raw = yt.search(query, filter='songs', limit=limit)
+    except Exception:
+        logger.exception('YouTube Music search failed')
+        return []
+
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw:
+        video_id = item.get('videoId')
+        if not video_id or video_id in seen:
+            continue
+        seen.add(video_id)
+
+        artists = item.get('artists') or []
+        artist = ', '.join(a['name'] for a in artists if a.get('name')) or 'Unknown'
+
+        results.append({
+            'id': video_id,
+            'title': item.get('title') or 'Unknown',
+            'artist': artist,
+            'duration': int(item.get('duration_seconds') or 0),
+            'url': f'https://music.youtube.com/watch?v={video_id}',
+        })
+        if len(results) >= limit:
+            break
+
+    return results
+
+
+def _search_youtube_ytdlp(query: str, limit: int) -> list[dict[str, Any]]:
+    """Search YouTube via yt-dlp (flat, no download).
+
+    A robust middle tier: it works even where YouTube Music isn't available and
+    still yields an exact, downloadable videoId. Returns [] on error.
+    """
+    options = _ydl_options()
+    options['extract_flat'] = True
+
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(f'ytsearch{limit}:{query}', download=False)
+    except yt_dlp.utils.DownloadError:
+        return []
+
+    if not info:
+        return []
+
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in info.get('entries') or []:
+        video_id = item.get('id')
+        if not video_id or video_id in seen:
+            continue
+        seen.add(video_id)
+        results.append({
+            'id': video_id,
+            'title': item.get('title') or 'Unknown',
+            'artist': item.get('uploader') or 'Unknown',
+            'duration': int(item.get('duration') or 0),
+            'url': f'https://www.youtube.com/watch?v={video_id}',
+        })
+
+    return results
+
+
+def _search_soundcloud(query: str, limit: int) -> list[dict[str, Any]]:
+    """Fetch top SoundCloud results (fallback when YouTube Music has nothing)."""
     options = _ydl_options()
     options['extract_flat'] = True
 
@@ -535,6 +715,21 @@ def _search_tracks(query: str, limit: int = 5) -> list[dict[str, Any]]:
         return []
 
 
+def _search_tracks(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Search for tracks to offer the user, most accurate source first.
+
+    1. YouTube Music — curated songs with clean title/artist metadata.
+    2. YouTube (via yt-dlp) — same downloadable source, works even where
+       YouTube Music isn't available.
+    3. SoundCloud — last-resort fallback so results still show.
+    """
+    for search in (_search_youtube_music, _search_youtube_ytdlp, _search_soundcloud):
+        results = search(query, limit)
+        if results:
+            return results
+    return []
+
+
 class Downloader:
     async def download(self, query: str) -> list[tuple[Song, Path | None]]:
         # The blocking yt-dlp work runs in a worker thread; the semaphore keeps
@@ -543,5 +738,6 @@ class Downloader:
             return await asyncio.to_thread(_resolve_and_download, query)
 
     async def search_tracks(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
-        async with _download_semaphore:
-            return await asyncio.to_thread(_search_tracks, query, limit)
+        # Search is a light API call (YouTube Music), so it doesn't take the
+        # heavy download semaphore — users can search while downloads run.
+        return await asyncio.to_thread(_search_tracks, query, limit)

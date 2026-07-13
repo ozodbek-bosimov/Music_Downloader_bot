@@ -1,0 +1,19 @@
+# PO-token (POT) provider for yt-dlp.
+#
+# This small sidecar lets the bot download YouTube audio WITHOUT cookies by
+# answering YouTube's "Sign in to confirm you're not a bot" challenge. The bot's
+# yt-dlp bgutil plugin auto-detects it at http://127.0.0.1:4416.
+#
+#   Start:   docker compose up -d
+#   Logs:    docker compose logs -f
+#   Stop:    docker compose down
+#
+# The port is bound to 127.0.0.1 only, so the provider is never exposed to the
+# public internet — only processes on this host can reach it.
+services:
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    container_name: bgutil-pot-provider
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:4416:4416'

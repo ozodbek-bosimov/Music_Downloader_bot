@@ -10,6 +10,8 @@ greenlet = "^3.1.1"
 psycopg = "^3.2.4"
 yt-dlp = {extras = ["default"], version = ">=2025.1.15"}
 alembic = "^1.15.2"
+ytmusicapi = "^1.12"
+bgutil-ytdlp-pot-provider = "^1.3"
 
 [tool.poetry.group.dev.dependencies]
 ruff = ">=0.9.3"

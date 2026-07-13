@@ -94,6 +94,24 @@ YTDLP_PLAYER_CLIENTS: Final[list[str]] = [
     if client.strip()
 ]
 
+# --- Search & source strategy ----------------------------------------------
+# Search is done on YouTube Music (accurate song metadata) and the exact match
+# is downloaded from YouTube. SoundCloud is only used as a fallback source when
+# a YouTube download fails, so availability stays high without cookies.
+
+# How many search results to show the user in the pick-a-track menu.
+MUSIC_SEARCH_LIMIT: Final[int] = int(os.getenv('MUSIC_SEARCH_LIMIT', '20'))
+
+# When a YouTube download fails (blocked, unavailable, etc.), try SoundCloud as
+# a fallback source for the same track. Set to '0' to disable the fallback.
+SOUNDCLOUD_FALLBACK: Final[bool] = os.getenv('SOUNDCLOUD_FALLBACK', '1') == '1'
+
+# Base URL of the bgutil PO-token provider HTTP server, which lets yt-dlp fetch
+# YouTube audio WITHOUT cookies (it answers the "Sign in to confirm you're not
+# a bot" challenge). Leave unset for the standard local Docker deployment — the
+# yt-dlp bgutil plugin then uses its own default of http://127.0.0.1:4416.
+POT_PROVIDER_BASE_URL: Final[str | None] = os.getenv('POT_PROVIDER_BASE_URL') or None
+
 LOGS_PATH: Final[Path] = BASE_DIR / 'logs'
 TRACKS_PATH: Final[Path] = BASE_DIR / 'tracks'
 
