@@ -384,12 +384,21 @@ def _download_image(url: str, name: str) -> Path | None:
 def _download_cover(item: dict[str, Any], cover_url: str | None) -> Path | None:
     """Save a cover image to use as the audio thumbnail.
 
-    For Spotify tracks we use the real album art (``cover_url``); otherwise
-    we use the thumbnail provided by the extractor (SoundCloud/YouTube)."""
+    For Spotify tracks we use the real album art (``cover_url``).  For YouTube
+    tracks we first try to grab the *square* album art from YouTube Music
+    (via ``ytmusicapi``) so Telegram doesn't squish a 16:9 video thumbnail.
+    Falls back to the extractor's thumbnail if nothing better is found."""
     video_id = item.get('id') or 'cover'
 
     if cover_url:
         return _download_image(cover_url, video_id)
+
+    # Try YouTube Music's square album art before the 16:9 video thumbnail.
+    music_cover = _ytmusic_cover_url(video_id)
+    if music_cover:
+        result = _download_image(music_cover, video_id)
+        if result:
+            return result
 
     thumbnail_url = item.get('thumbnail')
     if thumbnail_url:
@@ -610,6 +619,41 @@ def _get_ytmusic() -> Any:
                 'ytmusicapi unavailable; falling back to SoundCloud for search'
             )
     return _ytmusic
+
+
+def _ytmusic_cover_url(video_id: str) -> str | None:
+    """Get a square album-art URL from YouTube Music for *video_id*.
+
+    ``ytmusicapi.search`` returns 60×60/120×120 square thumbnails (album art),
+    whereas ``get_song`` only has 16:9 video frames.  We search by videoId,
+    grab the thumbnail URL, and bump its size parameter for a 544×544 image.
+    Returns ``None`` gracefully if ytmusicapi is unavailable or no match.
+    """
+    yt = _get_ytmusic()
+    if yt is None:
+        return None
+
+    try:
+        results = yt.search(video_id, filter='songs', limit=1)
+        if not results:
+            return None
+        # Confirm the result matches our videoId.
+        item = results[0]
+        if item.get('videoId') != video_id:
+            return None
+        thumbs = item.get('thumbnails') or []
+        if not thumbs:
+            return None
+        # Take the last (largest) thumbnail and request a bigger variant.
+        url = thumbs[-1].get('url') or ''
+        if not url:
+            return None
+        # Bump size from e.g. =w120-h120-… to =w544-h544-… for better quality.
+        import re as _re
+        url = _re.sub(r'=w\d+-h\d+', '=w544-h544', url)
+        return url
+    except Exception:
+        return None
 
 
 def _search_youtube_music(query: str, limit: int) -> list[dict[str, Any]]:
